@@ -1,0 +1,303 @@
+/* === Reset et base === */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f0f2f5;
+    color: #1a1a2e;
+    line-height: 1.6;
+}
+
+/* === Login === */
+.login-container {
+    max-width: 400px;
+    margin: 120px auto;
+    padding: 40px;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+    text-align: center;
+}
+
+.login-container h1 {
+    font-size: 1.8rem;
+    color: #16213e;
+    margin-bottom: 4px;
+}
+
+.subtitle {
+    color: #666;
+    font-size: 0.9rem;
+    margin-bottom: 32px;
+}
+
+.form-group {
+    margin-bottom: 16px;
+    text-align: left;
+}
+
+.form-group label {
+    display: block;
+    font-weight: 600;
+    font-size: 0.85rem;
+    margin-bottom: 4px;
+    color: #333;
+}
+
+.form-group input, .form-group select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 0.95rem;
+    transition: border-color 0.2s;
+}
+
+.form-group input:focus, .form-group select:focus {
+    outline: none;
+    border-color: #0f3460;
+    box-shadow: 0 0 0 2px rgba(15, 52, 96, 0.15);
+}
+
+button[type="submit"], .btn-primary {
+    width: 100%;
+    padding: 12px;
+    background: #0f3460;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 8px;
+    transition: background 0.2s;
+}
+
+button[type="submit"]:hover, .btn-primary:hover {
+    background: #16213e;
+}
+
+button[type="submit"]:disabled {
+    background: #999;
+    cursor: not-allowed;
+}
+
+.error-message {
+    background: #fee;
+    color: #c0392b;
+    padding: 10px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    margin-bottom: 8px;
+    border: 1px solid #f5c6cb;
+}
+
+.success-message {
+    background: #e8f5e9;
+    color: #2e7d32;
+    padding: 10px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    margin-bottom: 8px;
+    border: 1px solid #c8e6c9;
+}
+
+.footer-note {
+    margin-top: 24px;
+    font-size: 0.75rem;
+    color: #999;
+}
+
+/* === Header === */
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 32px;
+    background: #16213e;
+    color: #fff;
+}
+
+header h1 {
+    font-size: 1.3rem;
+}
+
+header nav {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+#user-info {
+    font-size: 0.85rem;
+    opacity: 0.8;
+}
+
+.btn-secondary {
+    padding: 6px 16px;
+    background: transparent;
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    border-radius: 4px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* === Dashboard === */
+.dashboard {
+    max-width: 1100px;
+    margin: 24px auto;
+    padding: 0 24px;
+}
+
+.section {
+    background: #fff;
+    border-radius: 8px;
+    padding: 24px;
+    margin-bottom: 24px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.section h2 {
+    font-size: 1.1rem;
+    color: #16213e;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #f0f2f5;
+}
+
+/* === Tableaux === */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+th {
+    text-align: left;
+    padding: 10px 12px;
+    background: #f8f9fa;
+    font-weight: 600;
+    color: #333;
+    border-bottom: 2px solid #e9ecef;
+}
+
+td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #f0f2f5;
+}
+
+tr:hover {
+    background: #f8f9fa;
+}
+
+.pagination {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.pagination button {
+    padding: 6px 14px;
+    border: 1px solid #ddd;
+    background: #fff;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+}
+
+.pagination button:hover {
+    background: #f0f2f5;
+}
+
+.pagination button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* === Formulaires dashboard === */
+.form-inline {
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+
+.form-inline .form-group {
+    margin-bottom: 0;
+}
+
+.form-inline button {
+    width: auto;
+    padding: 10px 20px;
+}
+
+.result-box {
+    margin-top: 16px;
+    padding: 12px;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+/* === Rapport === */
+.report-section {
+    margin-bottom: 20px;
+}
+
+.report-section h3 {
+    font-size: 1rem;
+    color: #0f3460;
+    margin-bottom: 8px;
+}
+
+.person-card {
+    display: flex;
+    gap: 24px;
+    padding: 16px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    margin-bottom: 16px;
+}
+
+.person-card .field {
+    font-size: 0.9rem;
+}
+
+.person-card .field strong {
+    color: #333;
+}
+
+.btn-small {
+    padding: 4px 10px;
+    font-size: 0.8rem;
+    background: #0f3460;
+    color: #fff;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.btn-small:hover {
+    background: #16213e;
+}
+
+/* === Utilitaires === */
+.hidden {
+    display: none !important;
+}
+
+.loading {
+    text-align: center;
+    color: #999;
+    padding: 20px;
+}

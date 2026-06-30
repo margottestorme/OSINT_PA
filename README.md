@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)
-![Tests](https://img.shields.io/badge/tests-88%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-94%20passed-brightgreen)
 ![License](https://img.shields.io/badge/licence-usage%20acad%C3%A9mique-orange)
 
 Plateforme OSINT (Open Source Intelligence) académique développée dans le cadre du **projet annuel ESGI** en cybersécurité (4e année). Elle permet la recherche, l'extraction et la corrélation d'entités à partir de sources publiques et légales, la reconnaissance faciale sur images statiques, et l'enrichissement automatique croisé entre les deux modules.
@@ -86,6 +86,39 @@ Plateforme OSINT (Open Source Intelligence) académique développée dans le cad
 - **Déduplication** : les emails et domaines déjà traités sont ignorés (sets `processed_emails` / `processed_domains`)
 - **Rapport complet** par personne : endpoint `GET /api/persons/{id}/report` regroupant personne, emails, sites et corrélations
 - **Rate limiting respecté** sur toutes les requêtes externes pendant l'enrichissement
+
+### Module 4 — Dashboard frontend
+- **Interface web** HTML/CSS/JS vanilla (aucun framework), servie directement par FastAPI
+- **Page de login** (`/login`) : formulaire username/password, JWT stocké en mémoire (jamais localStorage)
+- **Dashboard** (`/dashboard`) : 4 sections — upload image, recherche OSINT, liste des personnes, historique
+- **Rapport personne** (`/report?id=X`) : détail complet (infos, emails, sites, corrélations)
+- **Protection côté client** : redirection automatique vers `/login` si JWT absent ou expiré
+- **Gestion des erreurs** : messages visibles dans l'interface pour chaque section
+
+#### Pages disponibles
+
+| Route | Description |
+|-------|-------------|
+| `GET /` | Redirige vers `/login` |
+| `GET /login` | Page de connexion |
+| `GET /dashboard` | Dashboard principal (JWT requis côté client) |
+| `GET /report?id=X` | Rapport détaillé d'une personne |
+
+#### Accès à l'interface
+
+```bash
+# En local
+uvicorn app.main:app --reload
+# → http://localhost:8000/
+
+# Depuis la VM
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+# → http://<IP_VM>:8000/
+
+# Identifiants démo : admin / osint2024
+```
+
+*Captures d'écran : à ajouter.*
 
 ## Prérequis
 
@@ -296,7 +329,17 @@ osint-platform/
 │   ├── test_correlator.py       # Tests du corrélateur (6 tests)
 │   ├── test_facial.py          # Tests du moteur facial (17 tests)
 │   ├── test_rate_limiter.py    # Tests du rate limiter (2 tests)
-│   └── test_report_api.py      # Tests de l'endpoint rapport (5 tests)
+│   ├── test_report_api.py      # Tests de l'endpoint rapport (5 tests)
+│   └── test_frontend_routes.py # Tests des routes frontend (6 tests)
+├── frontend/
+│   ├── index.html              # Page de login
+│   ├── dashboard.html          # Dashboard principal
+│   ├── report.html             # Rapport par personne
+│   └── static/
+│       ├── css/style.css       # Styles globaux
+│       └── js/
+│           ├── api.js          # Client API (JWT en mémoire)
+│           └── app.js          # Logique UI
 ├── .env.example                # Template des variables d'environnement
 ├── .gitignore
 ├── alembic.ini                 # Configuration Alembic
@@ -323,9 +366,10 @@ python -m pytest tests/test_facial.py -v        # 17 tests moteur facial
 python -m pytest tests/test_rate_limiter.py -v  # 2 tests rate limiter
 python -m pytest tests/test_correlator.py -v    # 6 tests corrélateur
 python -m pytest tests/test_report_api.py -v    # 5 tests rapport personne
+python -m pytest tests/test_frontend_routes.py -v # 6 tests routes frontend
 ```
 
-**88 tests** couvrent :
+**94 tests** couvrent :
 - Authentification JWT (token valide, expiré, invalide, identifiants erronés)
 - Validation des inputs (injection SQL bloquée par enum Pydantic)
 - Rate limiting (429 après 10 requêtes/minute)
@@ -336,6 +380,7 @@ python -m pytest tests/test_report_api.py -v    # 5 tests rapport personne
 - Moteur facial (détection, embedding, comparaison euclidienne)
 - Corrélateur itératif (enrichissement multi-niveaux, déduplication)
 - Rapport par personne (auth, 404, données vides, données complètes, pagination)
+- Routes frontend (redirect, pages HTML, fichiers statiques CSS/JS)
 
 ## Stack technique
 

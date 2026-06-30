@@ -8,6 +8,9 @@ asyncpg==0.29.0
 psycopg2-binary==2.9.9
 alembic==1.13.1
 
+# Templates HTML
+jinja2==3.1.4
+
 # Validation et sérialisation
 pydantic==2.7.4
 pydantic-settings==2.3.4

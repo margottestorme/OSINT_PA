@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OSINT Platform — Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <header>
+        <h1>OSINT Platform</h1>
+        <nav>
+            <span id="user-info"></span>
+            <button id="logout-btn" class="btn-secondary">Deconnexion</button>
+        </nav>
+    </header>
+
+    <main class="dashboard">
+
+        <!-- Section 1 : Upload image -->
+        <div class="section">
+            <h2>Upload d'image — Reconnaissance faciale</h2>
+            <form id="upload-form" class="form-inline">
+                <div class="form-group">
+                    <label for="face-file">Image (JPG/PNG, max 5 Mo)</label>
+                    <input type="file" id="face-file" accept=".jpg,.jpeg,.png" required>
+                </div>
+                <button type="submit" class="btn-primary" id="upload-btn">Analyser</button>
+            </form>
+            <div id="upload-error" class="error-message hidden"></div>
+            <div id="upload-result" class="result-box success-message hidden"></div>
+        </div>
+
+        <!-- Section 2 : Recherche OSINT -->
+        <div class="section">
+            <h2>Recherche OSINT</h2>
+            <form id="search-form" class="form-inline">
+                <div class="form-group">
+                    <label for="search-query">Requete</label>
+                    <input type="text" id="search-query" placeholder="exemple@domaine.com" required>
+                </div>
+                <div class="form-group">
+                    <label for="search-type">Type</label>
+                    <select id="search-type">
+                        <option value="email">Email</option>
+                        <option value="domain">Domaine</option>
+                        <option value="name">Nom</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn-primary" id="search-btn">Rechercher</button>
+            </form>
+            <div id="search-error" class="error-message hidden"></div>
+            <div id="search-result" class="result-box success-message hidden"></div>
+        </div>
+
+        <!-- Section 3 : Liste des personnes -->
+        <div class="section">
+            <h2>Personnes identifiees</h2>
+            <div id="persons-error" class="error-message hidden"></div>
+            <div id="persons-loading" class="loading">Chargement...</div>
+            <table id="persons-table" class="hidden">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Prenom</th>
+                        <th>Nom</th>
+                        <th>Score</th>
+                        <th>Date</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="persons-body"></tbody>
+            </table>
+            <div id="persons-empty" class="loading hidden">Aucune personne enregistree.</div>
+            <div class="pagination" id="persons-pagination">
+                <button id="persons-prev" disabled>Precedent</button>
+                <span id="persons-page-info"></span>
+                <button id="persons-next" disabled>Suivant</button>
+            </div>
+        </div>
+
+        <!-- Section 4 : Historique des recherches -->
+        <div class="section">
+            <h2>
+                Historique des recherches
+                <button class="btn-small" id="history-refresh" style="margin-left: 12px;">Rafraichir</button>
+            </h2>
+            <div id="history-error" class="error-message hidden"></div>
+            <div id="history-loading" class="loading">Chargement...</div>
+            <table id="history-table" class="hidden">
+                <thead>
+                    <tr>
+                        <th>Requete</th>
+                        <th>Type</th>
+                        <th>Resultats</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody id="history-body"></tbody>
+            </table>
+            <div id="history-empty" class="loading hidden">Aucune recherche enregistree.</div>
+            <div class="pagination" id="history-pagination">
+                <button id="history-prev" disabled>Precedent</button>
+                <span id="history-page-info"></span>
+                <button id="history-next" disabled>Suivant</button>
+            </div>
+        </div>
+
+    </main>
+
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

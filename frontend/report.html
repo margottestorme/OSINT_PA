@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OSINT Platform — Rapport</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <header>
+        <h1>OSINT Platform</h1>
+        <nav>
+            <a href="/dashboard" class="btn-secondary">Retour au dashboard</a>
+            <button id="logout-btn" class="btn-secondary">Deconnexion</button>
+        </nav>
+    </header>
+
+    <main class="dashboard">
+
+        <div id="report-error" class="error-message hidden"></div>
+        <div id="report-loading" class="loading">Chargement du rapport...</div>
+
+        <div id="report-content" class="hidden">
+
+            <!-- Infos personne -->
+            <div class="section">
+                <h2>Personne</h2>
+                <div class="person-card" id="person-info"></div>
+            </div>
+
+            <!-- Emails -->
+            <div class="section">
+                <h2>Emails trouves</h2>
+                <div id="emails-empty" class="loading hidden">Aucun email trouve.</div>
+                <table id="emails-table" class="hidden">
+                    <thead>
+                        <tr>
+                            <th>Email</th>
+                            <th>Source</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody id="emails-body"></tbody>
+                </table>
+            </div>
+
+            <!-- Sites -->
+            <div class="section">
+                <h2>Sites decouverts</h2>
+                <div id="sites-empty" class="loading hidden">Aucun site decouvert.</div>
+                <table id="sites-table" class="hidden">
+                    <thead>
+                        <tr>
+                            <th>URL</th>
+                            <th>Serveur</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sites-body"></tbody>
+                </table>
+            </div>
+
+            <!-- Correlations -->
+            <div class="section">
+                <h2>Correlations</h2>
+                <div id="correlations-empty" class="loading hidden">Aucune correlation trouvee.</div>
+                <table id="correlations-table" class="hidden">
+                    <thead>
+                        <tr>
+                            <th>Email ID</th>
+                            <th>Site ID</th>
+                            <th>Score</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody id="correlations-body"></tbody>
+                </table>
+            </div>
+
+        </div>
+
+    </main>
+
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
