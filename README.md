@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)
-![Tests](https://img.shields.io/badge/tests-94%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-109%20passed-brightgreen)
 ![License](https://img.shields.io/badge/licence-usage%20acad%C3%A9mique-orange)
 
 Plateforme OSINT (Open Source Intelligence) académique développée dans le cadre du **projet annuel ESGI** en cybersécurité (4e année). Elle permet la recherche, l'extraction et la corrélation d'entités à partir de sources publiques et légales, la reconnaissance faciale sur images statiques, et l'enrichissement automatique croisé entre les deux modules.
@@ -119,6 +119,28 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 *Captures d'écran : à ajouter.*
+
+### Module 5 — Sécurité & Hardening
+- **Gestion multi-utilisateurs** : table `users` en DB avec rôles `admin` / `analyst`, comptes activables/désactivables
+- **Authentification en DB** : vérification bcrypt en base, plus aucun mot de passe hardcodé
+- **CLI de gestion** : `python -m app.cli create-user --username admin --role admin`
+- **Logs d'audit** : table `audit_logs` traçant 5 événements (login réussi/échoué, upload facial, recherche OSINT, consultation rapport)
+- **En-têtes de sécurité HTTP** sur toutes les réponses : `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `Referrer-Policy`, `Content-Security-Policy`
+- **Rate limiting global** : 100 requêtes/minute par IP (configurable via `.env`)
+- **CORS restreint** : origines autorisées via `ALLOWED_ORIGINS` dans `.env`, méthodes GET/POST uniquement
+- **Timeout externe** : 10s max sur les requêtes httpx (configurable)
+
+#### Commandes CLI
+
+```bash
+# Créer un administrateur
+python -m app.cli create-user --username admin --role admin
+
+# Créer un analyste
+python -m app.cli create-user --username analyst1 --role analyst
+
+# Le mot de passe est demandé interactivement (ou --password pour scripts)
+```
 
 ## Prérequis
 
@@ -298,15 +320,16 @@ osint-platform/
 ├── app/
 │   ├── api/
 │   │   ├── face_routes.py      # Endpoints reconnaissance faciale
-│   │   ├── middleware.py       # Logging des requêtes HTTP
+│   │   ├── middleware.py       # Logging, en-têtes sécurité, rate limit global
 │   │   ├── rate_limit.py       # Rate limiter par utilisateur
 │   │   └── routes.py           # Endpoints OSINT + auth + health
 │   ├── core/
+│   │   ├── audit.py            # Fonction create_audit_log + extraction IP
 │   │   ├── config.py           # Configuration centralisée (pydantic-settings)
 │   │   ├── logging.py          # Configuration loguru
-│   │   └── security.py         # JWT + bcrypt
+│   │   └── security.py         # JWT + bcrypt + auth en DB
 │   ├── db/
-│   │   ├── models.py           # Modèles SQLAlchemy (5 tables + embedding)
+│   │   ├── models.py           # Modèles SQLAlchemy (7 tables : users, audit_logs...)
 │   │   └── session.py          # Engine async + session factory
 │   ├── facial/
 │   │   ├── engine.py           # Détection, embedding, matching facial
@@ -317,7 +340,8 @@ osint-platform/
 │   │   └── rate_limiter.py     # Rate limiter pour requêtes externes (2s min)
 │   ├── schemas/
 │   │   └── schemas.py          # Schemas Pydantic (validation I/O)
-│   └── main.py                 # Point d'entrée FastAPI
+│   ├── cli.py                  # CLI gestion utilisateurs
+│   └── main.py                 # Point d'entrée FastAPI + CORS
 ├── alembic/
 │   ├── versions/               # Fichiers de migration
 │   └── env.py                  # Configuration Alembic
@@ -330,7 +354,8 @@ osint-platform/
 │   ├── test_facial.py          # Tests du moteur facial (17 tests)
 │   ├── test_rate_limiter.py    # Tests du rate limiter (2 tests)
 │   ├── test_report_api.py      # Tests de l'endpoint rapport (5 tests)
-│   └── test_frontend_routes.py # Tests des routes frontend (6 tests)
+│   ├── test_frontend_routes.py # Tests des routes frontend (6 tests)
+│   └── test_security.py        # Tests sécurité (15 tests)
 ├── frontend/
 │   ├── index.html              # Page de login
 │   ├── dashboard.html          # Dashboard principal
@@ -367,9 +392,10 @@ python -m pytest tests/test_rate_limiter.py -v  # 2 tests rate limiter
 python -m pytest tests/test_correlator.py -v    # 6 tests corrélateur
 python -m pytest tests/test_report_api.py -v    # 5 tests rapport personne
 python -m pytest tests/test_frontend_routes.py -v # 6 tests routes frontend
+python -m pytest tests/test_security.py -v        # 15 tests sécurité
 ```
 
-**94 tests** couvrent :
+**109 tests** couvrent :
 - Authentification JWT (token valide, expiré, invalide, identifiants erronés)
 - Validation des inputs (injection SQL bloquée par enum Pydantic)
 - Rate limiting (429 après 10 requêtes/minute)
@@ -381,6 +407,10 @@ python -m pytest tests/test_frontend_routes.py -v # 6 tests routes frontend
 - Corrélateur itératif (enrichissement multi-niveaux, déduplication)
 - Rapport par personne (auth, 404, données vides, données complètes, pagination)
 - Routes frontend (redirect, pages HTML, fichiers statiques CSS/JS)
+- Multi-utilisateurs (login DB, user inactif, rôle dans JWT, last_login)
+- Logs d'audit (login succès/échec, upload, recherche, rapport)
+- En-têtes de sécurité (5 headers sur health, login, dashboard)
+- Rate limiting global (blocage par IP, IP différente non bloquée)
 
 ## Stack technique
 

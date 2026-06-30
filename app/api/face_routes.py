@@ -1,13 +1,14 @@
 import hashlib
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile, File, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
 from app.core.security import verify_token
+from app.core.audit import create_audit_log, get_client_ip
 from app.db.session import get_db
-from app.db.models import Person
+from app.db.models import Person, User
 from app.facial.engine import compare_embedding, process_image
 from app.facial.exceptions import FacialError
 from app.schemas.schemas import FacePersonResponse, FaceUploadResponse
@@ -32,12 +33,13 @@ async def _background_enrich(person_id: int) -> None:
 
 @face_router.post("/upload", response_model=FaceUploadResponse)
 async def upload_face(
+    request: Request,
     file: UploadFile = File(...),
     background_tasks: BackgroundTasks = None,
     db: AsyncSession = Depends(get_db),
     token_data: dict = Depends(verify_token),
 ):
-    user = token_data.get("sub", "unknown")
+    username = token_data.get("sub", "unknown")
 
     # Lecture du fichier en mémoire
     image_bytes = await file.read()
@@ -51,7 +53,11 @@ async def upload_face(
 
     # Calcul du SHA256
     image_hash = hashlib.sha256(image_bytes).hexdigest()
-    logger.info(f"[faces/upload] user={user} hash={image_hash[:16]}... taille={len(image_bytes)}")
+    logger.info(f"[faces/upload] user={username} hash={image_hash[:16]}... taille={len(image_bytes)}")
+
+    user_id_result = await db.execute(select(User.id).where(User.username == username))
+    user_id = user_id_result.scalar_one_or_none()
+    ip = get_client_ip(request)
 
     # Anti-doublon : vérifier si ce hash existe déjà en DB
     existing = await db.execute(
@@ -60,6 +66,7 @@ async def upload_face(
     duplicate = existing.scalar_one_or_none()
     if duplicate:
         logger.info(f"[faces/upload] Doublon détecté — person_id={duplicate.id}")
+        await create_audit_log(db, "face_upload", target=f"person_id={duplicate.id},is_new=false,duplicate=true", user_id=user_id, ip_address=ip)
         return FaceUploadResponse(
             person_id=duplicate.id,
             is_new=False,
@@ -98,6 +105,7 @@ async def upload_face(
             f"[faces/upload] Match trouvé — person_id={person_id}, "
             f"distance={score}, confidence={confidence}"
         )
+        await create_audit_log(db, "face_upload", target=f"person_id={person_id},is_new=false", user_id=user_id, ip_address=ip)
         if background_tasks:
             background_tasks.add_task(_background_enrich, person_id)
         return FaceUploadResponse(
@@ -119,6 +127,7 @@ async def upload_face(
     await db.flush()
 
     logger.info(f"[faces/upload] Nouvelle personne créée — person_id={new_person.id}")
+    await create_audit_log(db, "face_upload", target=f"person_id={new_person.id},is_new=true", user_id=user_id, ip_address=ip)
     return FaceUploadResponse(
         person_id=new_person.id,
         is_new=True,

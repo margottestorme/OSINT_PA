@@ -20,6 +20,10 @@ class Settings(BaseSettings):
 
     API_PREFIX: str = "/api"
 
+    ALLOWED_ORIGINS: str = "http://localhost:8000"
+    EXTERNAL_REQUEST_TIMEOUT: int = 10
+    GLOBAL_RATE_LIMIT: int = 100
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

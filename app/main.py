@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
@@ -9,7 +10,11 @@ from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.api.routes import router
 from app.api.face_routes import face_router
-from app.api.middleware import RequestLoggingMiddleware
+from app.api.middleware import (
+    GlobalRateLimitMiddleware,
+    RequestLoggingMiddleware,
+    SecurityHeadersMiddleware,
+)
 
 settings = get_settings()
 setup_logging()
@@ -24,6 +29,14 @@ app = FastAPI(
 )
 
 app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(GlobalRateLimitMiddleware, max_requests=settings.GLOBAL_RATE_LIMIT)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in settings.ALLOWED_ORIGINS.split(",")],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 app.include_router(router)
 app.include_router(face_router)
 

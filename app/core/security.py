@@ -4,20 +4,24 @@ from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from passlib.context import CryptContext
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 
 security_scheme = HTTPBearer(auto_error=True)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# Utilisateur de démonstration — en production, stocker en DB
-DEMO_USERS = {
-    "admin": pwd_context.hash("osint2024"),
-}
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return pwd_context.verify(plain, hashed)
 
 
 def create_access_token(data: dict, expires_minutes: int = 15) -> str:
-    """Génère un token JWT avec une durée de vie de 15 minutes par défaut."""
     settings = get_settings()
     expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
     to_encode = {**data, "exp": expire}
@@ -25,7 +29,6 @@ def create_access_token(data: dict, expires_minutes: int = 15) -> str:
 
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security_scheme)) -> dict:
-    """Vérifie et décode un token JWT depuis l'en-tête Authorization."""
     settings = get_settings()
     try:
         payload = jwt.decode(
@@ -43,9 +46,22 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security_sc
         )
 
 
-def authenticate_user(username: str, password: str) -> str | None:
-    """Vérifie les identifiants et retourne le username si valide."""
-    hashed = DEMO_USERS.get(username)
-    if hashed and pwd_context.verify(password, hashed):
-        return username
-    return None
+async def authenticate_user(username: str, password: str, db: AsyncSession):
+    from app.db.models import User
+
+    result = await db.execute(select(User).where(User.username == username))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        return None
+
+    if not user.is_active:
+        return None
+
+    if not verify_password(password, user.hashed_password):
+        return None
+
+    user.last_login = datetime.now(timezone.utc)
+    await db.flush()
+
+    return user

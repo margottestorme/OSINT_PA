@@ -1,12 +1,13 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
 from app.core.config import get_settings
 from app.core.security import authenticate_user, create_access_token, verify_token
+from app.core.audit import create_audit_log, get_client_ip
 from app.db.session import get_db
-from app.db.models import Correlation, Email, Person, SearchHistory, Site
+from app.db.models import Correlation, Email, Person, SearchHistory, Site, User
 from app.schemas.schemas import (
     CorrelationResponse,
     EmailResponse,
@@ -25,6 +26,12 @@ from app.api.rate_limit import search_rate_limiter
 router = APIRouter()
 
 
+async def _resolve_user_id(db: AsyncSession, username: str) -> int | None:
+    result = await db.execute(select(User.id).where(User.username == username))
+    row = result.scalar_one_or_none()
+    return row
+
+
 # --- Healthcheck (public) ---
 
 @router.get("/health", response_model=HealthResponse, tags=["système"])
@@ -36,15 +43,18 @@ async def health_check():
 # --- Auth ---
 
 @router.post("/api/auth/login", response_model=TokenResponse, tags=["auth"])
-async def login(body: LoginRequest):
-    user = authenticate_user(body.username, body.password)
+async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    ip = get_client_ip(request)
+    user = await authenticate_user(body.username, body.password, db)
     if not user:
+        await create_audit_log(db, "login_failed", target=body.username, ip_address=ip)
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Identifiants invalides",
         )
-    token = create_access_token({"sub": user}, expires_minutes=15)
-    logger.info(f"[auth] Connexion réussie pour {user}")
+    token = create_access_token({"sub": user.username, "role": user.role}, expires_minutes=15)
+    await create_audit_log(db, "login_success", target=user.username, user_id=user.id, ip_address=ip)
     return TokenResponse(access_token=token)
 
 
@@ -75,14 +85,22 @@ async def _run_search(query: str, query_type: str) -> None:
 @router.post("/api/search", response_model=SearchResponse, tags=["recherche"])
 async def launch_search(
     body: SearchRequest,
+    request: Request,
     background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
     token_data: dict = Depends(verify_token),
 ):
-    user = token_data.get("sub", "unknown")
-    search_rate_limiter.check(user)
+    username = token_data.get("sub", "unknown")
+    search_rate_limiter.check(username)
+
+    user_id = await _resolve_user_id(db, username)
+    await create_audit_log(
+        db, "search_launched",
+        target=f"{body.query_type.value}:{body.query}",
+        user_id=user_id, ip_address=get_client_ip(request),
+    )
 
     background_tasks.add_task(_run_search, body.query, body.query_type.value)
-    logger.info(f"[search] Recherche lancée par {user} : '{body.query}' ({body.query_type.value})")
 
     return SearchResponse(
         message="Recherche lancée en arrière-plan",
@@ -141,11 +159,20 @@ async def list_history(
 @router.get("/api/persons/{person_id}/report", response_model=PersonReportResponse, tags=["données"])
 async def get_person_report(
     person_id: int,
+    request: Request,
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     token_data: dict = Depends(verify_token),
 ):
+    username = token_data.get("sub", "unknown")
+    user_id = await _resolve_user_id(db, username)
+    await create_audit_log(
+        db, "report_viewed",
+        target=str(person_id),
+        user_id=user_id, ip_address=get_client_ip(request),
+    )
+
     person = await db.get(Person, person_id)
     if not person:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Personne introuvable")

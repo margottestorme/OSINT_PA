@@ -1,10 +1,26 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Float, Integer, DateTime, ForeignKey, Index, Text, text
+from sqlalchemy import Boolean, String, Float, Integer, DateTime, ForeignKey, Index, Text, text
 from sqlalchemy.types import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(20), default="analyst")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    last_login: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class Person(Base):
@@ -80,13 +96,25 @@ class Correlation(Base):
 
 
 class SearchHistory(Base):
-    """Historique des recherches effectuées sur la plateforme."""
     __tablename__ = "search_history"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     query: Mapped[str] = mapped_column(Text)
     query_type: Mapped[str] = mapped_column(String(50))
     result_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    action: Mapped[str] = mapped_column(String(50))
+    target: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

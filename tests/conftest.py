@@ -7,7 +7,8 @@ from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 from app.db.session import Base, get_db
-from app.core.security import create_access_token
+from app.db.models import User
+from app.core.security import create_access_token, hash_password
 from app.main import app
 
 TEST_DB_URL = "sqlite+aiosqlite://"
@@ -30,9 +31,20 @@ app.dependency_overrides[get_db] = override_get_db
 
 @pytest_asyncio.fixture(autouse=True)
 async def setup_db():
-    """Crée les tables avant chaque test et les supprime après."""
+    """Crée les tables et l'utilisateur de test avant chaque test."""
     async with engine_test.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    async with session_test() as db:
+        admin = User(
+            username="admin",
+            hashed_password=hash_password("osint2024"),
+            role="admin",
+            is_active=True,
+        )
+        db.add(admin)
+        await db.commit()
+
     yield
     async with engine_test.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)

@@ -8,10 +8,12 @@ import whois
 import dns.resolver
 from loguru import logger
 
+from app.core.config import get_settings
 from app.osint.rate_limiter import RateLimiter
 
 _nlp = spacy.load("fr_core_news_sm")
 _rate_limiter = RateLimiter(min_interval=2.0)
+_timeout = get_settings().EXTERNAL_REQUEST_TIMEOUT
 
 # Regex pour l'extraction d'emails et de domaines
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
@@ -159,7 +161,7 @@ async def _duckduckgo_search(query: str) -> dict:
     logger.debug(f"[duckduckgo] Recherche : {query}")
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=float(_timeout)) as client:
             response = await client.get(
                 "https://api.duckduckgo.com/",
                 params={"q": query, "format": "json", "no_redirect": "1"},
