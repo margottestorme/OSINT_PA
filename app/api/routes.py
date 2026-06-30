@@ -1,16 +1,15 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
 from app.core.config import get_settings
-from app.core.security import authenticate_user, create_access_token, verify_token
-from app.core.audit import create_audit_log, get_client_ip
+from app.core.security import authenticate_user, create_access_token, require_role, verify_token
+from app.core.audit import create_audit_log, get_client_ip, resolve_user_id
 from app.db.session import get_db
-from app.db.models import Correlation, Email, Person, SearchHistory, Site, User
+from app.db.models import Correlation, Email, Person, SearchHistory, Site
 from app.schemas.schemas import (
     CorrelationResponse,
-    EmailResponse,
     HealthResponse,
     LoginRequest,
     PersonReportResponse,
@@ -18,18 +17,11 @@ from app.schemas.schemas import (
     SearchHistoryResponse,
     SearchRequest,
     SearchResponse,
-    SiteResponse,
     TokenResponse,
 )
-from app.api.rate_limit import search_rate_limiter
+from app.api.rate_limit import login_rate_limiter, search_rate_limiter
 
 router = APIRouter()
-
-
-async def _resolve_user_id(db: AsyncSession, username: str) -> int | None:
-    result = await db.execute(select(User.id).where(User.username == username))
-    row = result.scalar_one_or_none()
-    return row
 
 
 # --- Healthcheck (public) ---
@@ -45,6 +37,8 @@ async def health_check():
 @router.post("/api/auth/login", response_model=TokenResponse, tags=["auth"])
 async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
     ip = get_client_ip(request)
+    # Throttle dédié anti-brute-force : 5 tentatives/minute par IP (S3)
+    login_rate_limiter.check(ip)
     user = await authenticate_user(body.username, body.password, db)
     if not user:
         await create_audit_log(db, "login_failed", target=body.username, ip_address=ip)
@@ -93,7 +87,7 @@ async def launch_search(
     username = token_data.get("sub", "unknown")
     search_rate_limiter.check(username)
 
-    user_id = await _resolve_user_id(db, username)
+    user_id = await resolve_user_id(db, username)
     await create_audit_log(
         db, "search_launched",
         target=f"{body.query_type.value}:{body.query}",
@@ -116,7 +110,7 @@ async def list_correlations(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
-    token_data: dict = Depends(verify_token),
+    token_data: dict = Depends(require_role("admin")),
 ):
     result = await db.execute(
         select(Correlation).order_by(Correlation.created_at.desc()).limit(limit).offset(offset)
@@ -131,7 +125,7 @@ async def list_persons(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
-    token_data: dict = Depends(verify_token),
+    token_data: dict = Depends(require_role("admin")),
 ):
     result = await db.execute(
         select(Person).order_by(Person.created_at.desc()).limit(limit).offset(offset)
@@ -146,7 +140,7 @@ async def list_history(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
-    token_data: dict = Depends(verify_token),
+    token_data: dict = Depends(require_role("admin")),
 ):
     result = await db.execute(
         select(SearchHistory).order_by(SearchHistory.created_at.desc()).limit(limit).offset(offset)
@@ -165,28 +159,24 @@ async def get_person_report(
     db: AsyncSession = Depends(get_db),
     token_data: dict = Depends(verify_token),
 ):
+    person = await db.get(Person, person_id)
+    if not person:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Personne introuvable")
+
+    # Audit après vérification d'existence (m5) : on ne trace que les consultations réelles
     username = token_data.get("sub", "unknown")
-    user_id = await _resolve_user_id(db, username)
+    user_id = await resolve_user_id(db, username)
     await create_audit_log(
         db, "report_viewed",
         target=str(person_id),
         user_id=user_id, ip_address=get_client_ip(request),
     )
 
-    person = await db.get(Person, person_id)
-    if not person:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Personne introuvable")
-
     emails_result = await db.execute(
         select(Email).where(Email.person_id == person_id)
         .order_by(Email.created_at.desc()).limit(limit).offset(offset)
     )
-
-    email_ids = []
-    emails_list = []
-    for e in emails_result.scalars().all():
-        emails_list.append(e)
-        email_ids.append(e.id)
+    emails_list = list(emails_result.scalars().all())
 
     correlations_result = await db.execute(
         select(Correlation).where(Correlation.person_id == person_id)

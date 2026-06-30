@@ -6,8 +6,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from loguru import logger
 
-from app.core.config import get_settings
-
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -44,10 +42,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, max_requests: int = 100, window: int = 60):
+    def __init__(self, app, max_requests: int = 100, window: int = 60, purge_interval: int = 300):
         super().__init__(app)
         self.max_requests = max_requests
         self.window = window
+        self._purge_interval = purge_interval
+        self._last_purge = time.monotonic()
         self._requests: dict[str, list[float]] = defaultdict(list)
 
     def _get_ip(self, request: Request) -> str:
@@ -56,9 +56,25 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
             return forwarded.split(",")[0].strip()
         return request.client.host if request.client else "unknown"
 
+    def _purge_expired(self, now: float) -> None:
+        """Supprime les IPs dont tous les timestamps sont expirés (évite la fuite mémoire)."""
+        if now - self._last_purge < self._purge_interval:
+            return
+        stale = [
+            ip for ip, ts in self._requests.items()
+            if not ts or now - ts[-1] >= self.window
+        ]
+        for ip in stale:
+            del self._requests[ip]
+        self._last_purge = now
+        if stale:
+            logger.debug(f"[rate_limit] Purge de {len(stale)} IP(s) inactive(s)")
+
     async def dispatch(self, request: Request, call_next) -> Response:
         ip = self._get_ip(request)
         now = time.monotonic()
+
+        self._purge_expired(now)
 
         timestamps = self._requests[ip]
         self._requests[ip] = [t for t in timestamps if now - t < self.window]

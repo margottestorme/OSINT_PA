@@ -206,6 +206,58 @@ async def test_security_headers_on_dashboard(client):
 
 
 # =============================================================
+# RBAC (S6) — endpoints sensibles réservés à admin
+# =============================================================
+
+ADMIN_ONLY_ENDPOINTS = [
+    "/api/persons",
+    "/api/correlations",
+    "/api/history",
+    "/api/faces/persons",
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ADMIN_ONLY_ENDPOINTS)
+async def test_rbac_analyst_forbidden(client, analyst_headers, endpoint):
+    resp = await client.get(endpoint, headers=analyst_headers)
+    assert resp.status_code == 403
+    assert "privilèges" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ADMIN_ONLY_ENDPOINTS)
+async def test_rbac_admin_allowed(client, auth_headers, endpoint):
+    resp = await client.get(endpoint, headers=auth_headers)
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_rbac_analyst_can_search(client, analyst_headers):
+    """L'analyst conserve l'accès à la recherche OSINT."""
+    resp = await client.post(
+        "/api/search",
+        json={"query": "test@example.com", "query_type": "email"},
+        headers=analyst_headers,
+    )
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_rbac_analyst_can_upload(client, analyst_headers):
+    """L'analyst conserve l'accès à l'upload facial."""
+    jpeg = _make_jpeg()
+    with patch("app.api.face_routes.process_image", return_value=FAKE_PROCESS_RESULT), \
+         patch("app.api.face_routes.compare_embedding", return_value=None):
+        resp = await client.post(
+            "/api/faces/upload",
+            files={"file": ("test.jpg", jpeg, "image/jpeg")},
+            headers=analyst_headers,
+        )
+    assert resp.status_code == 200
+
+
+# =============================================================
 # 4. Rate limiting global
 # =============================================================
 
@@ -258,3 +310,33 @@ async def test_global_rate_limit_different_ip_not_blocked():
 
         resp = await c.get("/ping", headers={"X-Forwarded-For": "10.0.0.99"})
         assert resp.status_code == 200
+
+
+# =============================================================
+# Les 5 en-têtes de sécurité sont présents sur une réponse 429 (régression M2)
+# =============================================================
+
+@pytest.mark.asyncio
+async def test_security_headers_on_429(client):
+    """Une réponse 429 du rate-limiter global doit porter les 5 en-têtes.
+
+    C'est le test qui aurait attrapé M2 : avant correction, SecurityHeaders
+    était interne à GlobalRateLimit, donc les 429 sortaient sans en-têtes.
+    Exerce la vraie app (ordre réel des middlewares de main.py).
+    """
+    from tests.conftest import global_limiter
+
+    assert global_limiter is not None, "rate-limiter global introuvable dans le stack"
+    original_max = global_limiter.max_requests
+    global_limiter.max_requests = 2
+    global_limiter._requests.clear()
+    try:
+        last = None
+        for _ in range(3):
+            last = await client.get("/health")
+        assert last.status_code == 429
+        for header, value in EXPECTED_HEADERS.items():
+            assert last.headers.get(header) == value, f"{header} manquant sur le 429"
+    finally:
+        global_limiter.max_requests = original_max
+        global_limiter._requests.clear()

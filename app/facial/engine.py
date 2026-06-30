@@ -25,7 +25,9 @@ def _load_image_array(image_bytes: bytes) -> np.ndarray:
         img.close()
         return arr
     except Exception as e:
-        raise InvalidImageError(f"Impossible de décoder l'image : {e}")
+        # Détail technique loggé côté serveur uniquement (S8), message client générique
+        logger.warning(f"[_load_image_array] Échec décodage image : {e}")
+        raise InvalidImageError("Image invalide ou illisible")
 
 
 def detect_faces(image_bytes: bytes) -> list[dict]:
@@ -131,7 +133,9 @@ def process_image(image_bytes: bytes, image_hash: str) -> dict:
         fmt = img.format
         img.close()
     except Exception as e:
-        raise InvalidImageError(f"Format d'image non reconnu : {e}")
+        # Détail technique loggé côté serveur uniquement (S8), message client générique
+        logger.warning(f"[process_image] Format d'image non reconnu : {e}")
+        raise InvalidImageError("Format d'image non reconnu")
 
     if fmt not in ALLOWED_FORMATS:
         raise InvalidImageError(f"Format '{fmt}' non supporté — acceptés : {ALLOWED_FORMATS}")

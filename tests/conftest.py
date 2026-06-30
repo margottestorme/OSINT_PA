@@ -29,6 +29,25 @@ async def override_get_db():
 app.dependency_overrides[get_db] = override_get_db
 
 
+# Construit le stack de middlewares une fois et récupère l'instance du rate-limiter
+# global, afin de pouvoir réinitialiser son compteur entre les tests (sinon les
+# requêtes s'accumulent par IP et finissent par déclencher des 429 parasites).
+app.middleware_stack = app.build_middleware_stack()
+
+
+def _find_global_limiter():
+    from app.api.middleware import GlobalRateLimitMiddleware
+    mw = app.middleware_stack
+    while mw is not None:
+        if isinstance(mw, GlobalRateLimitMiddleware):
+            return mw
+        mw = getattr(mw, "app", None)
+    return None
+
+
+global_limiter = _find_global_limiter()
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def setup_db():
     """Crée les tables et l'utilisateur de test avant chaque test."""
@@ -52,11 +71,17 @@ async def setup_db():
 
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter():
-    """Réinitialise le rate limiter API entre chaque test."""
-    from app.api.rate_limit import search_rate_limiter
+    """Réinitialise les rate limiters API et le rate-limiter global entre chaque test."""
+    from app.api.rate_limit import search_rate_limiter, login_rate_limiter
     search_rate_limiter._requests.clear()
+    login_rate_limiter._requests.clear()
+    if global_limiter is not None:
+        global_limiter._requests.clear()
     yield
     search_rate_limiter._requests.clear()
+    login_rate_limiter._requests.clear()
+    if global_limiter is not None:
+        global_limiter._requests.clear()
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -65,6 +90,19 @@ def _mock_background_search():
     async def noop(query, query_type):
         pass
     with patch("app.api.routes._run_search", side_effect=noop):
+        yield
+
+
+@pytest_asyncio.fixture(autouse=True)
+def _mock_background_enrich():
+    """Remplace _background_enrich par un no-op (T6) — symétrique à _run_search.
+
+    Évite qu'un test de match facial déclenche une vraie tâche de fond
+    enrich_person -> correlate() (réseau réel + rate-limiter 2s).
+    """
+    async def noop(person_id):
+        pass
+    with patch("app.api.face_routes._background_enrich", side_effect=noop):
         yield
 
 
@@ -77,13 +115,20 @@ async def client():
 
 @pytest.fixture
 def auth_headers():
-    """Retourne des headers avec un token JWT valide."""
-    token = create_access_token({"sub": "testuser"}, expires_minutes=15)
+    """Headers avec un token JWT valide de rôle admin (accès à tous les endpoints)."""
+    token = create_access_token({"sub": "testuser", "role": "admin"}, expires_minutes=15)
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def analyst_headers():
+    """Headers avec un token JWT valide de rôle analyst (accès restreint)."""
+    token = create_access_token({"sub": "analyst1", "role": "analyst"}, expires_minutes=15)
     return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture
 def expired_headers():
     """Retourne des headers avec un token JWT expiré."""
-    token = create_access_token({"sub": "testuser"}, expires_minutes=-1)
+    token = create_access_token({"sub": "testuser", "role": "admin"}, expires_minutes=-1)
     return {"Authorization": f"Bearer {token}"}

@@ -55,10 +55,18 @@ async def enrich_person(person_id: int, db: AsyncSession) -> dict:
                 logger.error(f"[enrich] Erreur correlate({email_addr}) : {e}")
                 continue
 
+            # Email pivoté résolu une seule fois (m6) — constant pour tous ses résultats
+            current_email = await _find_email(db, email_addr)
+
             # Traiter chaque résultat OSINT
             for item in osint_results:
                 source = item.get("source", "unknown")
                 data = item.get("data", {})
+
+                # Site à lier à la corrélation de ce résultat (None si aucun)
+                item_site_id: int | None = None
+                # Une corrélation n'est créée que si une nouvelle entité est découverte (m7)
+                discovered_new = False
 
                 # Extraire les entités textuelles des résultats
                 text_content = _extract_text(data)
@@ -77,36 +85,43 @@ async def enrich_person(person_id: int, db: AsyncSession) -> dict:
                             )
                             if email_obj:
                                 counters["new_emails"] += 1
+                                discovered_new = True
                                 next_queue.append(new_email)
 
                     # Stocker les nouveaux domaines comme sites
                     for domain in entities.get("domains", []):
+                        url = f"https://{domain.lower()}"
+                        site_obj, created = await _get_or_create_site(db, url, source)
+                        if created:
+                            counters["new_sites"] += 1
+                            discovered_new = True
                         if domain not in processed_domains:
                             processed_domains.add(domain)
-                            site_obj = await _get_or_create_site(db, domain, source)
-                            if site_obj:
-                                counters["new_sites"] += 1
+                        item_site_id = site_obj.id
 
-                # Stocker les sites provenant du WHOIS ou DNS
+                # Stocker les sites provenant du WHOIS ou DNS (prioritaire)
                 if source == "whois":
                     domain_name = data.get("domain_name")
                     if domain_name and isinstance(domain_name, str):
                         url = f"https://{domain_name.lower()}"
+                        site_obj, created = await _get_or_create_site(db, url, "whois")
+                        if created:
+                            counters["new_sites"] += 1
+                            discovered_new = True
                         if domain_name.lower() not in processed_domains:
                             processed_domains.add(domain_name.lower())
-                            site_obj = await _get_or_create_site(db, url, "whois")
-                            if site_obj:
-                                counters["new_sites"] += 1
+                        item_site_id = site_obj.id
 
-                # Créer une corrélation pour chaque résultat
-                email_obj = await _find_email(db, email_addr)
-                corr = Correlation(
-                    person_id=person_id,
-                    email_id=email_obj.id if email_obj else None,
-                    score=0.5,
-                )
-                db.add(corr)
-                counters["new_correlations"] += 1
+                # Corrélation créée uniquement si une nouvelle entité a été découverte (m7)
+                if discovered_new:
+                    corr = Correlation(
+                        person_id=person_id,
+                        email_id=current_email.id if current_email else None,
+                        site_id=item_site_id,
+                        score=0.5,
+                    )
+                    db.add(corr)
+                    counters["new_correlations"] += 1
 
         email_queue = next_queue
 
@@ -168,14 +183,20 @@ async def _get_or_create_email(
 
 async def _get_or_create_site(
     db: AsyncSession, url: str, source: str
-) -> Site | None:
-    """Crée un site s'il n'existe pas déjà en DB. Retourne le Site créé ou None."""
+) -> tuple[Site, bool]:
+    """Récupère ou crée un site en DB.
+
+    Retourne (site, created) : `created=True` si le site vient d'être créé,
+    `False` s'il existait déjà. Le site est toujours retourné pour permettre
+    de lier une corrélation, qu'il soit nouveau ou non.
+    """
     result = await db.execute(select(Site).where(Site.url == url))
-    if result.scalar_one_or_none():
-        return None
+    existing = result.scalar_one_or_none()
+    if existing:
+        return existing, False
 
     site_obj = Site(url=url, server=source)
     db.add(site_obj)
     await db.flush()
     logger.debug(f"[enrich] Nouveau site stocké : {url} (source={source})")
-    return site_obj
+    return site_obj, True

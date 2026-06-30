@@ -1,6 +1,13 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
+# Secrets JWT connus comme non sécurisés (défaut du code + valeur dev du .env).
+# Si l'un d'eux est utilisé, le garde-fou de démarrage refuse de tourner en production.
+INSECURE_JWT_SECRETS = {
+    "change-me-in-production",
+    "dev-secret-key-change-in-production",
+}
+
 
 class Settings(BaseSettings):
     """Configuration centralisée chargée depuis les variables d'environnement."""
@@ -15,7 +22,9 @@ class Settings(BaseSettings):
 
     APP_NAME: str = "OSINT-Platform"
     APP_VERSION: str = "0.1.0"
-    DEBUG: bool = True
+    # Sécurité (S7) : défaut False — pas d'echo SQL ni d'exposition par défaut.
+    # Le développement active DEBUG=true via le .env.
+    DEBUG: bool = False
     LOG_LEVEL: str = "DEBUG"
 
     API_PREFIX: str = "/api"
@@ -30,3 +39,23 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def validate_security(settings: Settings) -> None:
+    """Garde-fou de démarrage : vérifie que le secret JWT n'est pas une valeur par défaut.
+
+    - DEBUG=true  : avertissement seulement (développement autorisé).
+    - DEBUG=false : log critique + refus de démarrer (RuntimeError).
+    """
+    from loguru import logger
+
+    if settings.JWT_SECRET_KEY in INSECURE_JWT_SECRETS:
+        message = (
+            "JWT_SECRET_KEY utilise une valeur par défaut non sécurisée. "
+            "Définissez une clé secrète forte dans .env avant tout déploiement."
+        )
+        if settings.DEBUG:
+            logger.warning(f"[sécurité] {message} (toléré en mode DEBUG)")
+        else:
+            logger.critical(f"[sécurité] {message} Démarrage refusé en production.")
+            raise RuntimeError(message)

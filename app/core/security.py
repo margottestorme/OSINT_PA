@@ -12,6 +12,11 @@ from app.core.config import get_settings
 security_scheme = HTTPBearer(auto_error=True)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+# Hash bcrypt précalculé pour un mot de passe factice (S9, anti-timing).
+# Permet d'exécuter un verify de coût équivalent même si l'utilisateur n'existe pas,
+# afin que le temps de réponse ne révèle pas l'existence d'un compte.
+_DUMMY_HASH = pwd_context.hash("dummy-password-for-timing-mitigation")
+
 
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
@@ -46,6 +51,20 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security_sc
         )
 
 
+def require_role(*allowed_roles: str):
+    """Construit une dépendance qui exige que le token porte l'un des rôles autorisés (S6)."""
+
+    def checker(token_data: dict = Depends(verify_token)) -> dict:
+        if token_data.get("role") not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Accès réservé : privilèges insuffisants",
+            )
+        return token_data
+
+    return checker
+
+
 async def authenticate_user(username: str, password: str, db: AsyncSession):
     from app.db.models import User
 
@@ -53,6 +72,9 @@ async def authenticate_user(username: str, password: str, db: AsyncSession):
     user = result.scalar_one_or_none()
 
     if not user:
+        # Anti-timing (S9) : on exécute quand même un verify sur un hash factice
+        # pour que le temps de réponse soit identique à celui d'un utilisateur existant.
+        verify_password(password, _DUMMY_HASH)
         return None
 
     if not user.is_active:

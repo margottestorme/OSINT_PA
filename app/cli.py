@@ -8,16 +8,21 @@ import asyncio
 import getpass
 import sys
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 
 from app.core.security import hash_password
-from app.db.session import async_session, engine, Base
+from app.db.session import async_session, engine
 from app.db.models import User
 
 
 async def create_user(username: str, password: str, role: str) -> None:
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Le schéma doit avoir été créé via Alembic (m10) — on ne crée plus les tables ici,
+    # pour éviter toute divergence avec les migrations.
+    async with engine.connect() as conn:
+        has_users_table = await conn.run_sync(lambda c: inspect(c).has_table("users"))
+    if not has_users_table:
+        print("Erreur : schéma non initialisé. Lancez d'abord : alembic upgrade head")
+        sys.exit(1)
 
     async with async_session() as db:
         existing = await db.execute(select(User).where(User.username == username))

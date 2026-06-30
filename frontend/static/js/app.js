@@ -43,7 +43,7 @@ async function handleLogin(e) {
     const username = document.getElementById("username").value.trim();
     const password = document.getElementById("password").value;
 
-    errorEl.hidden = true;
+    errorEl.classList.add("hidden");
     btn.disabled = true;
     btn.textContent = "Connexion...";
 
@@ -52,7 +52,7 @@ async function handleLogin(e) {
         window.location.href = "/dashboard";
     } catch (err) {
         errorEl.textContent = err.message;
-        errorEl.hidden = false;
+        errorEl.classList.remove("hidden");
     } finally {
         btn.disabled = false;
         btn.textContent = "Se connecter";

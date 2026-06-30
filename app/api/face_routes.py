@@ -5,10 +5,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
-from app.core.security import verify_token
-from app.core.audit import create_audit_log, get_client_ip
+from app.core.security import require_role, verify_token
+from app.core.audit import create_audit_log, get_client_ip, resolve_user_id
 from app.db.session import get_db
-from app.db.models import Person, User
+from app.db.models import Person
 from app.facial.engine import compare_embedding, process_image
 from app.facial.exceptions import FacialError
 from app.schemas.schemas import FacePersonResponse, FaceUploadResponse
@@ -55,8 +55,7 @@ async def upload_face(
     image_hash = hashlib.sha256(image_bytes).hexdigest()
     logger.info(f"[faces/upload] user={username} hash={image_hash[:16]}... taille={len(image_bytes)}")
 
-    user_id_result = await db.execute(select(User.id).where(User.username == username))
-    user_id = user_id_result.scalar_one_or_none()
+    user_id = await resolve_user_id(db, username)
     ip = get_client_ip(request)
 
     # Anti-doublon : vérifier si ce hash existe déjà en DB
@@ -141,7 +140,7 @@ async def list_face_persons(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
-    token_data: dict = Depends(verify_token),
+    token_data: dict = Depends(require_role("admin")),
 ):
     result = await db.execute(
         select(Person)

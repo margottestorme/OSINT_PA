@@ -17,7 +17,7 @@
 
     <main class="dashboard">
 
-        <div id="report-error" class="error-message hidden"></div>
+        <div id="report-error" class="error-message hidden" role="alert" aria-live="assertive"></div>
         <div id="report-loading" class="loading">Chargement du rapport...</div>
 
         <div id="report-content" class="hidden">
@@ -25,56 +25,62 @@
             <!-- Infos personne -->
             <div class="section">
                 <h2>Personne</h2>
-                <div class="person-card" id="person-info"></div>
+                <div class="person-card" id="person-info" aria-live="polite"></div>
             </div>
 
             <!-- Emails -->
             <div class="section">
                 <h2>Emails trouves</h2>
                 <div id="emails-empty" class="loading hidden">Aucun email trouve.</div>
-                <table id="emails-table" class="hidden">
-                    <thead>
-                        <tr>
-                            <th>Email</th>
-                            <th>Source</th>
-                            <th>Date</th>
-                        </tr>
-                    </thead>
-                    <tbody id="emails-body"></tbody>
-                </table>
+                <div class="table-wrap" aria-live="polite">
+                    <table id="emails-table" class="hidden">
+                        <thead>
+                            <tr>
+                                <th scope="col">Email</th>
+                                <th scope="col">Source</th>
+                                <th scope="col">Date</th>
+                            </tr>
+                        </thead>
+                        <tbody id="emails-body"></tbody>
+                    </table>
+                </div>
             </div>
 
             <!-- Sites -->
             <div class="section">
                 <h2>Sites decouverts</h2>
                 <div id="sites-empty" class="loading hidden">Aucun site decouvert.</div>
-                <table id="sites-table" class="hidden">
-                    <thead>
-                        <tr>
-                            <th>URL</th>
-                            <th>Serveur</th>
-                            <th>Date</th>
-                        </tr>
-                    </thead>
-                    <tbody id="sites-body"></tbody>
-                </table>
+                <div class="table-wrap" aria-live="polite">
+                    <table id="sites-table" class="hidden">
+                        <thead>
+                            <tr>
+                                <th scope="col">URL</th>
+                                <th scope="col">Serveur</th>
+                                <th scope="col">Date</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sites-body"></tbody>
+                    </table>
+                </div>
             </div>
 
             <!-- Correlations -->
             <div class="section">
                 <h2>Correlations</h2>
                 <div id="correlations-empty" class="loading hidden">Aucune correlation trouvee.</div>
-                <table id="correlations-table" class="hidden">
-                    <thead>
-                        <tr>
-                            <th>Email ID</th>
-                            <th>Site ID</th>
-                            <th>Score</th>
-                            <th>Date</th>
-                        </tr>
-                    </thead>
-                    <tbody id="correlations-body"></tbody>
-                </table>
+                <div class="table-wrap" aria-live="polite">
+                    <table id="correlations-table" class="hidden">
+                        <thead>
+                            <tr>
+                                <th scope="col">Email ID</th>
+                                <th scope="col">Site ID</th>
+                                <th scope="col">Score</th>
+                                <th scope="col">Date</th>
+                            </tr>
+                        </thead>
+                        <tbody id="correlations-body"></tbody>
+                    </table>
+                </div>
             </div>
 
         </div>

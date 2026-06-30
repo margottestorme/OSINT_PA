@@ -1,8 +1,9 @@
 from fastapi import Request
 from loguru import logger
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AuditLog
+from app.db.models import AuditLog, User
 
 
 def get_client_ip(request: Request) -> str:
@@ -10,6 +11,12 @@ def get_client_ip(request: Request) -> str:
     if forwarded:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
+
+
+async def resolve_user_id(db: AsyncSession, username: str) -> int | None:
+    """Résout l'id d'un utilisateur depuis son username (helper partagé pour l'audit)."""
+    result = await db.execute(select(User.id).where(User.username == username))
+    return result.scalar_one_or_none()
 
 
 async def create_audit_log(

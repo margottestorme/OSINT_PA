@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
-from app.core.config import get_settings
+from app.core.config import get_settings, validate_security
 from app.core.logging import setup_logging
 from app.api.routes import router
 from app.api.face_routes import face_router
@@ -18,6 +18,7 @@ from app.api.middleware import (
 
 settings = get_settings()
 setup_logging()
+validate_security(settings)
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -28,8 +29,11 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-app.add_middleware(RequestLoggingMiddleware)
-app.add_middleware(SecurityHeadersMiddleware)
+# Ordre d'exécution (externe -> interne) : SecurityHeaders, RequestLogging, CORS, GlobalRateLimit.
+# Starlette empile en LIFO : le DERNIER add_middleware est le plus externe.
+# SecurityHeaders doit être le plus externe pour que TOUTE réponse (y compris un 429
+# émis par GlobalRateLimit) reçoive les 5 en-têtes de sécurité. RequestLogging est
+# externe au rate-limit pour que les réponses 429 soient également journalisées.
 app.add_middleware(GlobalRateLimitMiddleware, max_requests=settings.GLOBAL_RATE_LIMIT)
 app.add_middleware(
     CORSMiddleware,
@@ -37,6 +41,8 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type"],
 )
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 app.include_router(router)
 app.include_router(face_router)
 

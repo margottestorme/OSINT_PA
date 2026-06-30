@@ -27,8 +27,8 @@
                 </div>
                 <button type="submit" class="btn-primary" id="upload-btn">Analyser</button>
             </form>
-            <div id="upload-error" class="error-message hidden"></div>
-            <div id="upload-result" class="result-box success-message hidden"></div>
+            <div id="upload-error" class="error-message hidden" role="alert" aria-live="assertive"></div>
+            <div id="upload-result" class="result-box success-message hidden" aria-live="polite"></div>
         </div>
 
         <!-- Section 2 : Recherche OSINT -->
@@ -49,28 +49,30 @@
                 </div>
                 <button type="submit" class="btn-primary" id="search-btn">Rechercher</button>
             </form>
-            <div id="search-error" class="error-message hidden"></div>
-            <div id="search-result" class="result-box success-message hidden"></div>
+            <div id="search-error" class="error-message hidden" role="alert" aria-live="assertive"></div>
+            <div id="search-result" class="result-box success-message hidden" aria-live="polite"></div>
         </div>
 
         <!-- Section 3 : Liste des personnes -->
         <div class="section">
             <h2>Personnes identifiees</h2>
-            <div id="persons-error" class="error-message hidden"></div>
+            <div id="persons-error" class="error-message hidden" role="alert" aria-live="assertive"></div>
             <div id="persons-loading" class="loading">Chargement...</div>
-            <table id="persons-table" class="hidden">
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Prenom</th>
-                        <th>Nom</th>
-                        <th>Score</th>
-                        <th>Date</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody id="persons-body"></tbody>
-            </table>
+            <div class="table-wrap" aria-live="polite">
+                <table id="persons-table" class="hidden">
+                    <thead>
+                        <tr>
+                            <th scope="col">ID</th>
+                            <th scope="col">Prenom</th>
+                            <th scope="col">Nom</th>
+                            <th scope="col">Score</th>
+                            <th scope="col">Date</th>
+                            <th scope="col">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="persons-body"></tbody>
+                </table>
+            </div>
             <div id="persons-empty" class="loading hidden">Aucune personne enregistree.</div>
             <div class="pagination" id="persons-pagination">
                 <button id="persons-prev" disabled>Precedent</button>
@@ -85,19 +87,21 @@
                 Historique des recherches
                 <button class="btn-small" id="history-refresh" style="margin-left: 12px;">Rafraichir</button>
             </h2>
-            <div id="history-error" class="error-message hidden"></div>
+            <div id="history-error" class="error-message hidden" role="alert" aria-live="assertive"></div>
             <div id="history-loading" class="loading">Chargement...</div>
-            <table id="history-table" class="hidden">
-                <thead>
-                    <tr>
-                        <th>Requete</th>
-                        <th>Type</th>
-                        <th>Resultats</th>
-                        <th>Date</th>
-                    </tr>
-                </thead>
-                <tbody id="history-body"></tbody>
-            </table>
+            <div class="table-wrap" aria-live="polite">
+                <table id="history-table" class="hidden">
+                    <thead>
+                        <tr>
+                            <th scope="col">Requete</th>
+                            <th scope="col">Type</th>
+                            <th scope="col">Resultats</th>
+                            <th scope="col">Date</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-body"></tbody>
+                </table>
+            </div>
             <div id="history-empty" class="loading hidden">Aucune recherche enregistree.</div>
             <div class="pagination" id="history-pagination">
                 <button id="history-prev" disabled>Precedent</button>
