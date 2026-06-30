@@ -1,31 +1,32 @@
 /**
  * Client API centralisé — OSINT Platform
- * JWT stocké en mémoire uniquement (jamais localStorage)
+ * JWT stocké en sessionStorage (persiste entre navigations, effacé à la fermeture de l'onglet)
  */
 
-const API = (() => {
-    let _token = null;
+const TOKEN_KEY = "osint_token";
 
+const API = (() => {
     function setToken(token) {
-        _token = token;
+        sessionStorage.setItem(TOKEN_KEY, token);
     }
 
     function getToken() {
-        return _token;
+        return sessionStorage.getItem(TOKEN_KEY);
     }
 
     function clearToken() {
-        _token = null;
+        sessionStorage.removeItem(TOKEN_KEY);
     }
 
     function isAuthenticated() {
-        return _token !== null;
+        return sessionStorage.getItem(TOKEN_KEY) !== null;
     }
 
     function _headers(extra = {}) {
         const h = { ...extra };
-        if (_token) {
-            h["Authorization"] = "Bearer " + _token;
+        const token = getToken();
+        if (token) {
+            h["Authorization"] = "Bearer " + token;
         }
         return h;
     }
