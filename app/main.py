@@ -5,6 +5,7 @@ from loguru import logger
 from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.api.routes import router
+from app.api.face_routes import face_router
 from app.api.middleware import RequestLoggingMiddleware
 
 settings = get_settings()
@@ -19,6 +20,7 @@ app = FastAPI(
 
 app.add_middleware(RequestLoggingMiddleware)
 app.include_router(router)
+app.include_router(face_router)
 
 
 @app.exception_handler(Exception)

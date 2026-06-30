@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Float, Integer, DateTime, ForeignKey, Text
+from sqlalchemy import String, Float, Integer, DateTime, ForeignKey, Index, Text, text
+from sqlalchemy.types import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -14,8 +15,16 @@ class Person(Base):
     first_name: Mapped[str] = mapped_column(String(100))
     last_name: Mapped[str] = mapped_column(String(100))
     confidence_score: Mapped[float] = mapped_column(Float, default=0.0)
+    embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    image_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    __table_args__ = (
+        Index("ix_persons_image_hash", "image_hash", unique=True,
+              sqlite_where=text("image_hash IS NOT NULL"),
+              postgresql_where=text("image_hash IS NOT NULL")),
     )
 
     emails: Mapped[list["Email"]] = relationship(back_populates="person", cascade="all, delete-orphan")

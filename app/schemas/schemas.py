@@ -93,6 +93,23 @@ class HealthResponse(BaseModel):
     version: str
 
 
+# --- Facial ---
+class FaceUploadResponse(BaseModel):
+    person_id: int
+    is_new: bool
+    confidence_score: float
+    faces_count: int
+
+class FacePersonResponse(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+    confidence_score: float
+    has_embedding: bool
+    created_at: datetime
+    model_config = {"from_attributes": True}
+
+
 # --- Pagination ---
 class PaginationParams(BaseModel):
     limit: int = Field(default=20, ge=1, le=100)
