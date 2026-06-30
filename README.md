@@ -3,10 +3,10 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)
-![Tests](https://img.shields.io/badge/tests-77%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-88%20passed-brightgreen)
 ![License](https://img.shields.io/badge/licence-usage%20acad%C3%A9mique-orange)
 
-Plateforme OSINT (Open Source Intelligence) académique développée dans le cadre du **projet annuel ESGI** en cybersécurité (4e année). Elle permet la recherche, l'extraction et la corrélation d'entités à partir de sources publiques et légales, ainsi que la reconnaissance faciale sur images statiques.
+Plateforme OSINT (Open Source Intelligence) académique développée dans le cadre du **projet annuel ESGI** en cybersécurité (4e année). Elle permet la recherche, l'extraction et la corrélation d'entités à partir de sources publiques et légales, la reconnaissance faciale sur images statiques, et l'enrichissement automatique croisé entre les deux modules.
 
 ---
 
@@ -76,6 +76,16 @@ Plateforme OSINT (Open Source Intelligence) académique développée dans le cad
 - **Anti-doublon** par hash SHA256 de l'image
 - **Aucune image persistée** — traitement en mémoire uniquement
 - **Création automatique** de nouvelles personnes si pas de match
+
+### Module 3 — Corrélation automatique facial → OSINT
+- **Enrichissement automatique** : lorsqu'un visage est matché à une personne existante, un enrichissement OSINT est lancé en tâche de fond
+- **Enrichissement itératif** sur 3 niveaux de profondeur maximum :
+  1. Niveau 0 : emails déjà associés à la personne
+  2. Niveau 1 : nouvelles entités découvertes via corrélation des emails
+  3. Niveau 2 : entités découvertes à partir des résultats du niveau 1
+- **Déduplication** : les emails et domaines déjà traités sont ignorés (sets `processed_emails` / `processed_domains`)
+- **Rapport complet** par personne : endpoint `GET /api/persons/{id}/report` regroupant personne, emails, sites et corrélations
+- **Rate limiting respecté** sur toutes les requêtes externes pendant l'enrichissement
 
 ## Prérequis
 
@@ -203,6 +213,22 @@ curl http://localhost:8000/api/faces/persons?limit=20&offset=0 \
 #   "confidence_score": 1.0, "has_embedding": true, "created_at": "..."}]
 ```
 
+### Module 3 — Rapport et enrichissement
+
+```bash
+# Rapport complet d'une personne (emails, sites, corrélations)
+curl http://localhost:8000/api/persons/1/report?limit=20&offset=0 \
+  -H "Authorization: Bearer <TOKEN>"
+
+# Réponse :
+# {
+#   "person": {"id": 1, "first_name": "Inconnu", "last_name": "#a1b2c3d4", ...},
+#   "emails": [{"id": 1, "email": "contact@example.com", "source": "duckduckgo", ...}],
+#   "sites": [{"id": 1, "url": "https://example.com", "server": "nginx", ...}],
+#   "correlations": [{"id": 1, "person_id": 1, "email_id": 1, "site_id": 1, "score": 0.85, ...}]
+# }
+```
+
 ### Consultation des données
 
 ```bash
@@ -253,6 +279,7 @@ osint-platform/
 │   │   ├── engine.py           # Détection, embedding, matching facial
 │   │   └── exceptions.py       # Exceptions métier (NoFace, MultipleFaces...)
 │   ├── osint/
+│   │   ├── correlator.py       # Enrichissement itératif facial→OSINT (3 niveaux)
 │   │   ├── engine.py           # Moteur OSINT (DuckDuckGo, WHOIS, DNS, spaCy)
 │   │   └── rate_limiter.py     # Rate limiter pour requêtes externes (2s min)
 │   ├── schemas/
@@ -266,8 +293,10 @@ osint-platform/
 │   ├── test_api.py             # Tests des endpoints OSINT (29 tests)
 │   ├── test_engine.py          # Tests du moteur OSINT (16 tests)
 │   ├── test_face_api.py        # Tests des endpoints faciaux (13 tests)
+│   ├── test_correlator.py       # Tests du corrélateur (6 tests)
 │   ├── test_facial.py          # Tests du moteur facial (17 tests)
-│   └── test_rate_limiter.py    # Tests du rate limiter (2 tests)
+│   ├── test_rate_limiter.py    # Tests du rate limiter (2 tests)
+│   └── test_report_api.py      # Tests de l'endpoint rapport (5 tests)
 ├── .env.example                # Template des variables d'environnement
 ├── .gitignore
 ├── alembic.ini                 # Configuration Alembic
@@ -292,9 +321,11 @@ python -m pytest tests/test_engine.py -v        # 16 tests moteur OSINT
 python -m pytest tests/test_face_api.py -v      # 13 tests API faciale
 python -m pytest tests/test_facial.py -v        # 17 tests moteur facial
 python -m pytest tests/test_rate_limiter.py -v  # 2 tests rate limiter
+python -m pytest tests/test_correlator.py -v    # 6 tests corrélateur
+python -m pytest tests/test_report_api.py -v    # 5 tests rapport personne
 ```
 
-**77 tests** couvrent :
+**88 tests** couvrent :
 - Authentification JWT (token valide, expiré, invalide, identifiants erronés)
 - Validation des inputs (injection SQL bloquée par enum Pydantic)
 - Rate limiting (429 après 10 requêtes/minute)
@@ -303,6 +334,8 @@ python -m pytest tests/test_rate_limiter.py -v  # 2 tests rate limiter
 - Rate limiter OSINT (délai minimum entre requêtes)
 - Upload facial (format valide/invalide, taille, doublon hash, match/pas de match)
 - Moteur facial (détection, embedding, comparaison euclidienne)
+- Corrélateur itératif (enrichissement multi-niveaux, déduplication)
+- Rapport par personne (auth, 404, données vides, données complètes, pagination)
 
 ## Stack technique
 

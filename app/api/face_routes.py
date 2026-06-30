@@ -1,6 +1,6 @@
 import hashlib
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
@@ -17,9 +17,23 @@ face_router = APIRouter(prefix="/api/faces", tags=["reconnaissance faciale"])
 MAX_UPLOAD_SIZE = 5 * 1024 * 1024  # 5 Mo
 
 
+async def _background_enrich(person_id: int) -> None:
+    """Tâche de fond : enrichit une personne via le moteur OSINT."""
+    from app.osint.correlator import enrich_person
+    from app.db.session import async_session
+
+    try:
+        async with async_session() as db:
+            result = await enrich_person(person_id, db)
+            logger.info(f"[faces/upload] Enrichissement terminé : {result}")
+    except Exception as e:
+        logger.error(f"[faces/upload] Erreur enrichissement person_id={person_id} : {e}")
+
+
 @face_router.post("/upload", response_model=FaceUploadResponse)
 async def upload_face(
     file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = None,
     db: AsyncSession = Depends(get_db),
     token_data: dict = Depends(verify_token),
 ):
@@ -84,6 +98,8 @@ async def upload_face(
             f"[faces/upload] Match trouvé — person_id={person_id}, "
             f"distance={score}, confidence={confidence}"
         )
+        if background_tasks:
+            background_tasks.add_task(_background_enrich, person_id)
         return FaceUploadResponse(
             person_id=person_id,
             is_new=False,

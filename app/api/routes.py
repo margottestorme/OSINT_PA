@@ -6,15 +6,18 @@ from loguru import logger
 from app.core.config import get_settings
 from app.core.security import authenticate_user, create_access_token, verify_token
 from app.db.session import get_db
-from app.db.models import Correlation, Person, SearchHistory
+from app.db.models import Correlation, Email, Person, SearchHistory, Site
 from app.schemas.schemas import (
     CorrelationResponse,
+    EmailResponse,
     HealthResponse,
     LoginRequest,
+    PersonReportResponse,
     PersonResponse,
     SearchHistoryResponse,
     SearchRequest,
     SearchResponse,
+    SiteResponse,
     TokenResponse,
 )
 from app.api.rate_limit import search_rate_limiter
@@ -131,3 +134,52 @@ async def list_history(
         select(SearchHistory).order_by(SearchHistory.created_at.desc()).limit(limit).offset(offset)
     )
     return result.scalars().all()
+
+
+# --- Report personne ---
+
+@router.get("/api/persons/{person_id}/report", response_model=PersonReportResponse, tags=["données"])
+async def get_person_report(
+    person_id: int,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    token_data: dict = Depends(verify_token),
+):
+    person = await db.get(Person, person_id)
+    if not person:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Personne introuvable")
+
+    emails_result = await db.execute(
+        select(Email).where(Email.person_id == person_id)
+        .order_by(Email.created_at.desc()).limit(limit).offset(offset)
+    )
+
+    email_ids = []
+    emails_list = []
+    for e in emails_result.scalars().all():
+        emails_list.append(e)
+        email_ids.append(e.id)
+
+    correlations_result = await db.execute(
+        select(Correlation).where(Correlation.person_id == person_id)
+        .order_by(Correlation.created_at.desc()).limit(limit).offset(offset)
+    )
+    correlations_list = correlations_result.scalars().all()
+
+    site_ids = {c.site_id for c in correlations_list if c.site_id is not None}
+    if site_ids:
+        sites_result = await db.execute(
+            select(Site).where(Site.id.in_(site_ids))
+            .order_by(Site.discovered_at.desc()).limit(limit).offset(offset)
+        )
+        sites_list = sites_result.scalars().all()
+    else:
+        sites_list = []
+
+    return PersonReportResponse(
+        person=person,
+        emails=emails_list,
+        sites=sites_list,
+        correlations=correlations_list,
+    )

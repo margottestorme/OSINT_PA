@@ -110,6 +110,14 @@ class FacePersonResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# --- Report ---
+class PersonReportResponse(BaseModel):
+    person: PersonResponse
+    emails: list[EmailResponse]
+    sites: list[SiteResponse]
+    correlations: list[CorrelationResponse]
+
+
 # --- Pagination ---
 class PaginationParams(BaseModel):
     limit: int = Field(default=20, ge=1, le=100)
