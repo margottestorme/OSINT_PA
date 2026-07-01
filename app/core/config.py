@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     EXTERNAL_REQUEST_TIMEOUT: int = 10
     GLOBAL_RATE_LIMIT: int = 100
 
+    # --- Clés API sources OSINT (toutes optionnelles, vide = source désactivée) ---
+    GITHUB_TOKEN: str = ""          # Lot Vert : optionnel, monte le quota GitHub
+    VIRUSTOTAL_API_KEY: str = ""    # Freemium : réputation/DNS passif de domaine
+    OTX_API_KEY: str = ""           # Freemium : AlienVault OTX (passive DNS)
+    HUNTER_API_KEY: str = ""        # Freemium : vérification d'email
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

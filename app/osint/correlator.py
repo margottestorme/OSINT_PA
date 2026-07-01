@@ -62,13 +62,21 @@ async def enrich_person(person_id: int, db: AsyncSession) -> dict:
             for item in osint_results:
                 source = item.get("source", "unknown")
                 data = item.get("data", {})
+                extracted = item.get("extracted", {}) or {}
 
                 # Site à lier à la corrélation de ce résultat (None si aucun)
                 item_site_id: int | None = None
                 # Une corrélation n'est créée que si une nouvelle entité est découverte (m7)
                 discovered_new = False
+                # IPs du résultat, stockées dans data de la corrélation
+                item_ips = list(extracted.get("ips", []))
 
-                # Extraire les entités textuelles des résultats
+                # Entités candidates : champ normalisé "extracted" (nouvelles sources)
+                new_emails: set[str] = set(extracted.get("emails", []))
+                new_domains: set[str] = set(extracted.get("domains", []))
+                new_urls: set[str] = set(extracted.get("urls", []))
+
+                # Complément : extraction texte (DuckDuckGo, WHOIS) via spaCy + regex
                 text_content = _extract_text(data)
                 if text_content:
                     try:
@@ -76,30 +84,39 @@ async def enrich_person(person_id: int, db: AsyncSession) -> dict:
                     except Exception as e:
                         logger.error(f"[enrich] Erreur extract_entities : {e}")
                         entities = {"emails": [], "domains": [], "names": []}
+                    new_emails.update(entities.get("emails", []))
+                    new_domains.update(entities.get("domains", []))
 
-                    # Stocker les nouveaux emails découverts
-                    for new_email in entities.get("emails", []):
-                        if new_email not in processed_emails:
-                            email_obj = await _get_or_create_email(
-                                db, new_email, source, person_id
-                            )
-                            if email_obj:
-                                counters["new_emails"] += 1
-                                discovered_new = True
-                                next_queue.append(new_email)
-
-                    # Stocker les nouveaux domaines comme sites
-                    for domain in entities.get("domains", []):
-                        url = f"https://{domain.lower()}"
-                        site_obj, created = await _get_or_create_site(db, url, source)
-                        if created:
-                            counters["new_sites"] += 1
+                # extracted.emails (+ texte) → table emails
+                for new_email in new_emails:
+                    if new_email not in processed_emails:
+                        email_obj = await _get_or_create_email(
+                            db, new_email, source, person_id
+                        )
+                        if email_obj:
+                            counters["new_emails"] += 1
                             discovered_new = True
-                        if domain not in processed_domains:
-                            processed_domains.add(domain)
-                        item_site_id = site_obj.id
+                            next_queue.append(new_email)
 
-                # Stocker les sites provenant du WHOIS ou DNS (prioritaire)
+                # extracted.domains (+ texte) → table sites (url = https://domaine)
+                for domain in new_domains:
+                    url = f"https://{domain.lower()}"
+                    site_obj, created = await _get_or_create_site(db, url, source)
+                    if created:
+                        counters["new_sites"] += 1
+                        discovered_new = True
+                    processed_domains.add(domain)
+                    item_site_id = site_obj.id
+
+                # extracted.urls → table sites (url telle quelle)
+                for raw_url in new_urls:
+                    site_obj, created = await _get_or_create_site(db, raw_url, source)
+                    if created:
+                        counters["new_sites"] += 1
+                        discovered_new = True
+                    item_site_id = site_obj.id
+
+                # Site issu du domaine WHOIS (registrant), prioritaire
                 if source == "whois":
                     domain_name = data.get("domain_name")
                     if domain_name and isinstance(domain_name, str):
@@ -108,17 +125,21 @@ async def enrich_person(person_id: int, db: AsyncSession) -> dict:
                         if created:
                             counters["new_sites"] += 1
                             discovered_new = True
-                        if domain_name.lower() not in processed_domains:
-                            processed_domains.add(domain_name.lower())
+                        processed_domains.add(domain_name.lower())
                         item_site_id = site_obj.id
 
-                # Corrélation créée uniquement si une nouvelle entité a été découverte (m7)
+                # Corrélation créée uniquement si une nouvelle entité a été découverte (m7),
+                # avec les IPs du résultat dans son champ data.
                 if discovered_new:
+                    corr_data = {"source": source}
+                    if item_ips:
+                        corr_data["ips"] = item_ips
                     corr = Correlation(
                         person_id=person_id,
                         email_id=current_email.id if current_email else None,
                         site_id=item_site_id,
                         score=0.5,
+                        data=corr_data,
                     )
                     db.add(corr)
                     counters["new_correlations"] += 1

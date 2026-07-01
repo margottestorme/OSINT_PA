@@ -86,6 +86,8 @@ class Correlation(Base):
     email_id: Mapped[int | None] = mapped_column(ForeignKey("emails.id"), nullable=True)
     site_id: Mapped[int | None] = mapped_column(ForeignKey("sites.id"), nullable=True)
     score: Mapped[float] = mapped_column(Float, default=0.0)
+    # Métadonnées additionnelles issues des sources (ex : IPs, nom de la source)
+    data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

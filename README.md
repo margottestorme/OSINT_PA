@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)
-![Tests](https://img.shields.io/badge/tests-109%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-156%20passed-brightgreen)
 ![License](https://img.shields.io/badge/licence-usage%20acad%C3%A9mique-orange)
 
 Plateforme OSINT (Open Source Intelligence) académique développée dans le cadre du **projet annuel ESGI** en cybersécurité (4e année). Elle permet la recherche, l'extraction et la corrélation d'entités à partir de sources publiques et légales, la reconnaissance faciale sur images statiques, et l'enrichissement automatique croisé entre les deux modules.
@@ -141,6 +141,48 @@ python -m app.cli create-user --username analyst1 --role analyst
 
 # Le mot de passe est demandé interactivement (ou --password pour scripts)
 ```
+
+### Module 7 — Sources OSINT enrichies
+Le moteur agrège désormais **10 sources** (en plus de DuckDuckGo / WHOIS / DNS MX historiques), toutes passant par le rate limiter (2s) et le timeout httpx, avec un User-Agent descriptif et une résilience totale (une source qui échoue renvoie `None`, jamais d'exception).
+
+**Lot Vert — 7 sources actives sans aucune clé API :**
+
+| Source | Type | Ce qu'elle retourne |
+|--------|------|---------------------|
+| **Gravatar** | email | Profil public (nom, avatar, liens sociaux) via hash MD5 |
+| **crt.sh** | domain | Sous-domaines via les logs de Certificate Transparency |
+| **DNS étendu** | domain | A / AAAA / NS / CNAME / TXT + SPF + DMARC |
+| **RDAP** | domain | Enregistrement structuré (successeur JSON de WHOIS) : NS, emails |
+| **Shodan InternetDB** | domain | Ports, CPE, vulnérabilités, hostnames (par IP résolue) |
+| **Wikipedia** | name | Pages fr.wikipedia correspondant au nom |
+| **GitHub** | name | Profils publics d'utilisateurs (token optionnel pour le quota) |
+
+**Lot Freemium — 3 sources dormantes (activées dès qu'une clé est fournie) :**
+
+| Source | Type | Clé (.env) | Où l'obtenir |
+|--------|------|-----------|--------------|
+| **VirusTotal** | domain | `VIRUSTOTAL_API_KEY` | https://www.virustotal.com/gui/my-apikey |
+| **AlienVault OTX** | domain | `OTX_API_KEY` | https://otx.alienvault.com/api |
+| **Hunter.io** | email | `HUNTER_API_KEY` | https://hunter.io/api-keys |
+
+> Sans clé, ces sources renvoient `None` silencieusement (log `debug`) : aucune erreur, aucun appel réseau. Il suffit de renseigner la clé dans `.env` pour les activer, sans toucher au code.
+
+#### Format `OsintResult` normalisé
+Chaque source renvoie une enveloppe commune, ce qui permet à l'enrichissement de peupler automatiquement les tables `emails` / `sites` / `correlations` :
+
+```json
+{
+  "source": "crt.sh",
+  "entity": "example.com",
+  "type": "domain",
+  "data": { "...": "payload brut spécifique à la source" },
+  "extracted": {
+    "emails":  [], "domains": [], "urls": [], "ips": [], "names": []
+  }
+}
+```
+
+Le champ `extracted` alimente l'enrichissement : `emails` → table emails, `domains`/`urls` → table sites, `ips` → champ `data` de la corrélation. Les sources s'ajoutent via un **registre déclaratif** `SOURCES` (aucun `if/elif` à modifier).
 
 ## Prérequis
 
@@ -355,7 +397,8 @@ osint-platform/
 │   ├── test_rate_limiter.py    # Tests du rate limiter (2 tests)
 │   ├── test_report_api.py      # Tests de l'endpoint rapport (5 tests)
 │   ├── test_frontend_routes.py # Tests des routes frontend (6 tests)
-│   └── test_security.py        # Tests sécurité (15 tests)
+│   ├── test_security.py        # Tests sécurité (25 tests)
+│   └── test_sources.py         # Tests des 10 sources OSINT (30 tests)
 ├── frontend/
 │   ├── index.html              # Page de login
 │   ├── dashboard.html          # Dashboard principal
@@ -392,10 +435,15 @@ python -m pytest tests/test_rate_limiter.py -v  # 2 tests rate limiter
 python -m pytest tests/test_correlator.py -v    # 6 tests corrélateur
 python -m pytest tests/test_report_api.py -v    # 5 tests rapport personne
 python -m pytest tests/test_frontend_routes.py -v # 6 tests routes frontend
-python -m pytest tests/test_security.py -v        # 15 tests sécurité
+python -m pytest tests/test_security.py -v        # 25 tests sécurité
+python -m pytest tests/test_sources.py -v         # 30 tests sources OSINT
+
+# Lancer la suite sur PostgreSQL au lieu de SQLite (compatibilité)
+TEST_DATABASE_URL=postgresql+asyncpg://osint_user:<password>@localhost:5432/osint_test \
+  python -m pytest tests/ -v
 ```
 
-**109 tests** couvrent :
+**156 tests** couvrent :
 - Authentification JWT (token valide, expiré, invalide, identifiants erronés)
 - Validation des inputs (injection SQL bloquée par enum Pydantic)
 - Rate limiting (429 après 10 requêtes/minute)
@@ -411,6 +459,8 @@ python -m pytest tests/test_security.py -v        # 15 tests sécurité
 - Logs d'audit (login succès/échec, upload, recherche, rapport)
 - En-têtes de sécurité (5 headers sur health, login, dashboard)
 - Rate limiting global (blocage par IP, IP différente non bloquée)
+- RBAC (analyst 403 / admin 200 sur les endpoints sensibles)
+- Sources OSINT (10 sources : réponse OK, cas vide, 404, résilience réseau, freemium dormant/actif)
 
 ## Stack technique
 

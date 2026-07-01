@@ -57,6 +57,7 @@ class CorrelationResponse(BaseModel):
     email_id: int | None
     site_id: int | None
     score: float
+    data: dict | None = None
     created_at: datetime
     model_config = {"from_attributes": True}
 

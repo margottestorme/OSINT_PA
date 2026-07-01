@@ -1,4 +1,3 @@
-import asyncio
 from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
@@ -134,29 +133,30 @@ async def test_whois_lookup_failure():
 
 @pytest.mark.asyncio
 async def test_correlate_email():
-    """Vérifie que le pivot email appelle search_email et whois_lookup."""
-    mock_search = [{"source": "dns_mx", "entity": "t@ex.com", "data": {}}]
-    mock_whois = {"domain_name": "ex.com", "registrar": "R"}
-
-    with patch.object(engine, "search_email", return_value=mock_search) as se, \
-         patch.object(engine, "whois_lookup", return_value=mock_whois) as wl:
+    """Pivot email : sources core (MX + DuckDuckGo + WHOIS), registre neutralisé."""
+    with patch.object(engine, "_resolve_mx", return_value=["mx.ex.com"]), \
+         patch.object(engine, "_duckduckgo_search", return_value={"Type": "E"}), \
+         patch.object(engine, "whois_lookup", return_value={"domain_name": "ex.com", "registrar": "R"}), \
+         patch.dict(engine.SOURCES, {"email": []}):
 
         results = await engine.correlate("t@ex.com", "email")
 
-        se.assert_called_once_with("t@ex.com")
-        wl.assert_called_once_with("ex.com")
-        assert len(results) == 2
         sources = [r["source"] for r in results]
         assert "dns_mx" in sources
+        assert "duckduckgo" in sources
         assert "whois" in sources
+        assert len(results) == 3
+        # Format normalisé sur tous les résultats
+        assert all("type" in r and "extracted" in r for r in results)
 
 
 @pytest.mark.asyncio
 async def test_correlate_domain():
-    """Vérifie que le pivot domain appelle whois, MX et DuckDuckGo."""
+    """Pivot domain : whois + MX + DuckDuckGo, registre neutralisé."""
     with patch.object(engine, "whois_lookup", return_value={"domain_name": "ex.com"}) as wl, \
          patch.object(engine, "_resolve_mx", return_value=["mx.ex.com"]) as mx, \
-         patch.object(engine, "_duckduckgo_search", return_value={"Type": "E"}) as ddg:
+         patch.object(engine, "_duckduckgo_search", return_value={"Type": "E"}) as ddg, \
+         patch.dict(engine.SOURCES, {"domain": []}):
 
         results = await engine.correlate("example.com", "domain")
 
@@ -168,13 +168,28 @@ async def test_correlate_domain():
 
 @pytest.mark.asyncio
 async def test_correlate_name():
-    """Vérifie que le pivot name n'appelle que DuckDuckGo."""
-    with patch.object(engine, "_duckduckgo_search", return_value={"Type": "E"}) as ddg:
+    """Pivot name : uniquement DuckDuckGo côté core, registre neutralisé."""
+    with patch.object(engine, "_duckduckgo_search", return_value={"Type": "E"}) as ddg, \
+         patch.dict(engine.SOURCES, {"name": []}):
         results = await engine.correlate("Jean Dupont", "name")
 
         ddg.assert_called_once_with("Jean Dupont")
         assert len(results) == 1
         assert results[0]["source"] == "duckduckgo"
+
+
+@pytest.mark.asyncio
+async def test_correlate_uses_registry():
+    """Pivot name : les sources du registre sont bien invoquées et agrégées."""
+    async def fake_source(entity):
+        return engine._normalize("faux", entity, "name", data={}, extracted={"names": [entity]})
+
+    with patch.object(engine, "_duckduckgo_search", return_value={}), \
+         patch.dict(engine.SOURCES, {"name": [fake_source]}):
+        results = await engine.correlate("Jean Dupont", "name")
+
+        assert len(results) == 1
+        assert results[0]["source"] == "faux"
 
 
 @pytest.mark.asyncio

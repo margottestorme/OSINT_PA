@@ -1,12 +1,11 @@
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 from app.db.session import Base
-from app.db.models import Person, Email, Site, Correlation
+from app.db.models import Person, Email
 from app.osint.correlator import enrich_person
 
 TEST_DB_URL = "sqlite+aiosqlite://"
@@ -129,7 +128,7 @@ async def test_enrich_person_deduplication(db):
 
     with patch("app.osint.correlator.correlate", side_effect=counting_correlate), \
          patch("app.osint.correlator.extract_entities", return_value=fake_entities):
-        result = await enrich_person(person.id, db)
+        await enrich_person(person.id, db)
 
     # correlate() ne doit être appelé qu'une fois pour "dup@example.com"
     assert call_count == 1
@@ -167,7 +166,7 @@ async def test_enrich_person_max_depth(db):
 
     with patch("app.osint.correlator.correlate", side_effect=chained_correlate), \
          patch("app.osint.correlator.extract_entities", side_effect=chained_entities):
-        result = await enrich_person(person.id, db)
+        await enrich_person(person.id, db)
 
     # Avec MAX_DEPTH=3 : profondeur 0 (level0), 1 (next-1), 2 (next-2)
     # next-3 est découvert à profondeur 2 mais jamais traité (profondeur 3 non atteinte)
