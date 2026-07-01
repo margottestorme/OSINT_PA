@@ -20,7 +20,9 @@ def upgrade() -> None:
         sa.Column("username", sa.String(50), unique=True, nullable=False, index=True),
         sa.Column("hashed_password", sa.String(255), nullable=False),
         sa.Column("role", sa.String(20), nullable=False, server_default="analyst"),
-        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+        # server_default portable : "true" est accepté par PostgreSQL ET SQLite
+        # (PostgreSQL rejette un défaut entier "1" sur une colonne booléenne).
+        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False,
                   server_default=sa.func.now()),
         sa.Column("last_login", sa.DateTime(timezone=True), nullable=True),

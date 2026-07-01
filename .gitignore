@@ -6,8 +6,12 @@ __pycache__/
 *.pyo
 *.egg-info/
 
-# Variables d'environnement (secrets)
+# Variables d'environnement (secrets) — on ignore tous les .env*
+# SAUF les templates .example qui doivent rester versionnés.
 .env
+.env.*
+!.env.example
+!.env.production.example
 
 # Base de données locale
 *.db

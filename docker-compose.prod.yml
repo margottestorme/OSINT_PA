@@ -1,0 +1,66 @@
+# =============================================================
+# Docker Compose — PRODUCTION
+# Lancement : docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+# - Image buildée (pas de montage du code source, pas de --reload)
+# - Volumes nommés persistants pour PostgreSQL et Redis
+# - DB et Redis NON exposés à l'extérieur (réseau interne uniquement)
+# - restart: always sur tous les services
+# =============================================================
+
+services:
+  app:
+    build: .
+    image: osint-platform:prod
+    container_name: osint-app
+    restart: always
+    env_file:
+      - .env.production
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Migrations appliquées au démarrage, puis lancement uvicorn (1 process :
+    # les rate limiters sont en mémoire et ne se partagent pas entre workers).
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    # Exposé uniquement en interne au réseau Docker (Nginx le proxifie à l'étape 2).
+    expose:
+      - "8000"
+
+  db:
+    image: postgres:15-alpine
+    container_name: osint-db
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+    # Pas de mapping de ports : accessible uniquement via le réseau interne
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: osint-redis
+    restart: always
+    # Persistance AOF activée
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata_prod:/data
+    # Pas de mapping de ports : accessible uniquement via le réseau interne
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata_prod:
+  redisdata_prod:

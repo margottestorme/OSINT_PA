@@ -1,9 +1,10 @@
-import asyncio
+import os
 from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy.pool import NullPool
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 from app.db.session import Base, get_db
@@ -11,9 +12,20 @@ from app.db.models import User
 from app.core.security import create_access_token, hash_password
 from app.main import app
 
-TEST_DB_URL = "sqlite+aiosqlite://"
+# Base de test : SQLite en mémoire par défaut (rapide, isolée). Peut être pointée
+# vers PostgreSQL via TEST_DATABASE_URL pour valider la compatibilité PG.
+#   ex: TEST_DATABASE_URL=postgresql+asyncpg://osint_user:<password>@localhost:5432/osint_test
+TEST_DB_URL = os.getenv("TEST_DATABASE_URL", "sqlite+aiosqlite://")
 
-engine_test = create_async_engine(TEST_DB_URL, echo=False)
+if TEST_DB_URL.startswith("sqlite"):
+    # SQLite en mémoire : pool par défaut (une seule connexion partagée) — indispensable,
+    # car avec NullPool chaque nouvelle connexion serait une base vide distincte.
+    engine_test = create_async_engine(TEST_DB_URL, echo=False)
+else:
+    # PostgreSQL/asyncpg : NullPool évite le partage de connexions entre boucles
+    # d'événements (pytest-asyncio crée une boucle par test) qui casserait le loop.
+    engine_test = create_async_engine(TEST_DB_URL, echo=False, poolclass=NullPool)
+
 session_test = async_sessionmaker(engine_test, class_=AsyncSession, expire_on_commit=False)
 
 
