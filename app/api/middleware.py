@@ -6,12 +6,24 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from loguru import logger
 
+# CSP : 'self' par défaut, avec allowlist des CDN utilisés par le frontend
+# (Lucide, vis-network, police Inter). 'unsafe-inline' est nécessaire pour les
+# petits scripts d'init inline (lucide.createIcons) et les styles inline des pages.
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://unpkg.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
+    "font-src 'self' https://fonts.gstatic.com; "
+    "img-src 'self' data:; "
+    "connect-src 'self'"
+)
+
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "X-XSS-Protection": "1; mode=block",
     "Referrer-Policy": "strict-origin-when-cross-origin",
-    "Content-Security-Policy": "default-src 'self'",
+    "Content-Security-Policy": _CSP,
 }
 
 

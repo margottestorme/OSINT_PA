@@ -158,6 +158,7 @@ async def list_face_persons(
             last_name=p.last_name,
             confidence_score=p.confidence_score,
             has_embedding=True,
+            notes=p.notes,
             created_at=p.created_at,
         )
         for p in persons

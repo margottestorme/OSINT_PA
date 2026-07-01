@@ -22,7 +22,8 @@ async def test_dashboard_page_returns_html(client):
     resp = await client.get("/dashboard")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    assert "upload-form" in resp.text
+    assert "search-form" in resp.text
+    assert "kpi-grid" in resp.text
 
 
 @pytest.mark.asyncio
@@ -31,6 +32,20 @@ async def test_report_page_returns_html(client):
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     assert "report-content" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_results_page_returns_html(client):
+    resp = await client.get("/results")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+@pytest.mark.asyncio
+async def test_graph_page_returns_html(client):
+    resp = await client.get("/graph")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
 
 
 @pytest.mark.asyncio

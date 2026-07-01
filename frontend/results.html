@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OSINT Platform — Resultats</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+<div class="app-shell">
+
+    <aside class="sidebar">
+        <div class="brand">
+            <span class="logo"><i data-lucide="radar"></i></span>
+            OSINT Platform
+        </div>
+        <nav>
+            <a class="nav-link" href="/dashboard"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+            <a class="nav-link active" href="/dashboard#history-section"><i data-lucide="history"></i> Historique</a>
+            <a class="nav-link" href="/graph"><i data-lucide="share-2"></i> Graphe</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="user-chip">
+                <span class="avatar" id="user-avatar">AD</span>
+                <span id="user-info">admin</span>
+            </div>
+            <button id="logout-btn" class="btn btn-ghost btn-sm" style="width:100%; color:var(--text-on-dark); border-color:var(--border-dark);">
+                <i data-lucide="log-out"></i> Deconnexion
+            </button>
+        </div>
+    </aside>
+
+    <div class="main">
+        <div class="topbar">
+            <div>
+                <h1>Resultats de recherche</h1>
+                <div class="subtitle">Detail des sources OSINT interrogees</div>
+            </div>
+            <div class="flex gap-8">
+                <a class="btn btn-ghost btn-sm" href="/dashboard#history-section"><i data-lucide="arrow-left"></i> Historique</a>
+                <button class="btn btn-primary btn-sm" id="export-btn" disabled><i data-lucide="download"></i> Exporter JSON</button>
+            </div>
+        </div>
+
+        <div class="content">
+            <div id="results-error" class="alert alert-error hidden" role="alert" aria-live="assertive"></div>
+            <div id="results-loading" class="loading"><span class="spinner dark"></span> Chargement des resultats...</div>
+
+            <div class="card hidden" id="search-header">
+                <div class="flex between items-center" style="flex-wrap:wrap; gap:12px;">
+                    <div>
+                        <div style="font-size:1.2rem; font-weight:700;" id="sh-query">—</div>
+                        <div class="flex gap-8 items-center" style="margin-top:8px;">
+                            <span class="badge" id="sh-type">—</span>
+                            <span class="text-muted" id="sh-date">—</span>
+                        </div>
+                    </div>
+                    <div class="flex gap-12" style="text-align:center;">
+                        <div><div style="font-size:1.5rem; font-weight:700;" id="sh-sources">0</div>
+                             <div class="kpi-label">Sources</div></div>
+                        <div><div style="font-size:1.5rem; font-weight:700; color:var(--success);" id="sh-entities">0</div>
+                             <div class="kpi-label">Entites</div></div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="sources-container"></div>
+
+            <div id="results-empty" class="empty-state hidden">
+                <div class="empty-icon"><i data-lucide="database"></i></div>
+                <h3>Aucun resultat</h3>
+                <p>Cette recherche n'a retourne aucune source exploitable.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/app.js"></script>
+<script>lucide.createIcons();</script>
+</body>
+</html>

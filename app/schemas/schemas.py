@@ -22,9 +22,15 @@ class PersonBase(BaseModel):
 class PersonCreate(PersonBase):
     pass
 
+class PersonUpdate(BaseModel):
+    first_name: str | None = Field(default=None, min_length=1, max_length=100)
+    last_name: str | None = Field(default=None, min_length=1, max_length=100)
+    notes: str | None = Field(default=None, max_length=5000)
+
 class PersonResponse(PersonBase):
     id: int
     confidence_score: float
+    notes: str | None = None
     created_at: datetime
     model_config = {"from_attributes": True}
 
@@ -88,10 +94,31 @@ class SearchHistoryResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# --- Résultat de recherche ---
+class SearchResultResponse(BaseModel):
+    id: int
+    search_id: int
+    source: str
+    entity: str
+    entity_type: str
+    data: dict | None = None
+    extracted: dict | None = None
+    created_at: datetime
+    model_config = {"from_attributes": True}
+
+
 # --- Health ---
 class HealthResponse(BaseModel):
     status: str
     version: str
+
+
+# --- Statistiques (dashboard KPI) ---
+class StatsResponse(BaseModel):
+    total_searches: int
+    total_persons: int
+    total_correlations: int
+    last_activity: datetime | None = None
 
 
 # --- Facial ---
@@ -107,6 +134,7 @@ class FacePersonResponse(BaseModel):
     last_name: str
     confidence_score: float
     has_embedding: bool
+    notes: str | None = None
     created_at: datetime
     model_config = {"from_attributes": True}
 

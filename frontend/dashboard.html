@@ -5,114 +5,194 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OSINT Platform — Dashboard</title>
     <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
 </head>
 <body>
-    <header>
-        <h1>OSINT Platform</h1>
+<div class="app-shell">
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+        <div class="brand">
+            <span class="logo"><i data-lucide="radar"></i></span>
+            OSINT Platform
+        </div>
         <nav>
-            <span id="user-info"></span>
-            <button id="logout-btn" class="btn-secondary">Deconnexion</button>
+            <a class="nav-link active" href="/dashboard"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+            <a class="nav-link" href="#search-section"><i data-lucide="search"></i> Recherche</a>
+            <a class="nav-link" href="#persons-section"><i data-lucide="users"></i> Personnes</a>
+            <a class="nav-link" href="#history-section"><i data-lucide="history"></i> Historique</a>
+            <a class="nav-link" href="/graph"><i data-lucide="share-2"></i> Graphe</a>
         </nav>
-    </header>
+        <div class="sidebar-footer">
+            <div class="user-chip">
+                <span class="avatar" id="user-avatar">AD</span>
+                <span id="user-info">admin</span>
+            </div>
+            <button id="logout-btn" class="btn btn-ghost btn-sm" style="width:100%; color:var(--text-on-dark); border-color:var(--border-dark);">
+                <i data-lucide="log-out"></i> Deconnexion
+            </button>
+        </div>
+    </aside>
 
-    <main class="dashboard">
+    <!-- Main -->
+    <div class="main">
+        <div class="topbar">
+            <div>
+                <h1>Tableau de bord</h1>
+                <div class="subtitle">Vue d'ensemble de la plateforme OSINT</div>
+            </div>
+            <button class="btn btn-ghost btn-sm" id="refresh-all"><i data-lucide="refresh-cw"></i> Rafraichir</button>
+        </div>
 
-        <!-- Section 1 : Upload image -->
-        <div class="section">
-            <h2>Upload d'image — Reconnaissance faciale</h2>
-            <form id="upload-form" class="form-inline">
-                <div class="form-group">
-                    <label for="face-file">Image (JPG/PNG, max 5 Mo)</label>
-                    <input type="file" id="face-file" accept=".jpg,.jpeg,.png" required>
+        <div class="content">
+
+            <!-- KPI -->
+            <div class="kpi-grid">
+                <div class="kpi">
+                    <div class="kpi-icon blue"><i data-lucide="search"></i></div>
+                    <div><div class="kpi-value" id="kpi-searches">—</div><div class="kpi-label">Recherches</div></div>
                 </div>
-                <button type="submit" class="btn-primary" id="upload-btn">Analyser</button>
-            </form>
-            <div id="upload-error" class="error-message hidden" role="alert" aria-live="assertive"></div>
-            <div id="upload-result" class="result-box success-message hidden" aria-live="polite"></div>
-        </div>
-
-        <!-- Section 2 : Recherche OSINT -->
-        <div class="section">
-            <h2>Recherche OSINT</h2>
-            <form id="search-form" class="form-inline">
-                <div class="form-group">
-                    <label for="search-query">Requete</label>
-                    <input type="text" id="search-query" placeholder="exemple@domaine.com" required>
+                <div class="kpi">
+                    <div class="kpi-icon green"><i data-lucide="users"></i></div>
+                    <div><div class="kpi-value" id="kpi-persons">—</div><div class="kpi-label">Personnes</div></div>
                 </div>
-                <div class="form-group">
-                    <label for="search-type">Type</label>
-                    <select id="search-type">
-                        <option value="email">Email</option>
-                        <option value="domain">Domaine</option>
-                        <option value="name">Nom</option>
-                    </select>
+                <div class="kpi">
+                    <div class="kpi-icon amber"><i data-lucide="git-merge"></i></div>
+                    <div><div class="kpi-value" id="kpi-correlations">—</div><div class="kpi-label">Correlations</div></div>
                 </div>
-                <button type="submit" class="btn-primary" id="search-btn">Rechercher</button>
-            </form>
-            <div id="search-error" class="error-message hidden" role="alert" aria-live="assertive"></div>
-            <div id="search-result" class="result-box success-message hidden" aria-live="polite"></div>
+                <div class="kpi">
+                    <div class="kpi-icon slate"><i data-lucide="clock"></i></div>
+                    <div><div class="kpi-value" id="kpi-activity" style="font-size:1rem;">—</div><div class="kpi-label">Derniere activite</div></div>
+                </div>
+            </div>
+
+            <!-- Upload -->
+            <div class="card">
+                <h2><i data-lucide="scan-face"></i> Reconnaissance faciale</h2>
+                <p class="card-desc">Glissez une image (JPG/PNG, max 5 Mo) ou cliquez pour parcourir.</p>
+                <div class="dropzone" id="dropzone">
+                    <i data-lucide="upload-cloud" style="width:34px;height:34px;color:var(--text-muted);"></i>
+                    <p id="dropzone-text">Deposez une image ici</p>
+                    <input type="file" id="face-file" accept=".jpg,.jpeg,.png" hidden>
+                </div>
+                <div id="upload-error" class="alert alert-error hidden" role="alert" aria-live="assertive"></div>
+                <div id="upload-result" class="alert alert-success hidden" aria-live="polite"></div>
+            </div>
+
+            <!-- Recherche -->
+            <div class="card" id="search-section">
+                <h2><i data-lucide="search"></i> Recherche OSINT</h2>
+                <form id="search-form" class="form-row">
+                    <div class="field">
+                        <label for="search-query">Requete</label>
+                        <input class="input" type="text" id="search-query" placeholder="exemple@domaine.com" required>
+                    </div>
+                    <div class="field" style="flex:0 0 160px;">
+                        <label for="search-type">Type</label>
+                        <select class="input" id="search-type">
+                            <option value="email">Email</option>
+                            <option value="domain">Domaine</option>
+                            <option value="name">Nom</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary" id="search-btn">
+                        <span id="search-btn-label"><i data-lucide="search"></i> Rechercher</span>
+                    </button>
+                </form>
+                <div id="search-error" class="alert alert-error hidden" role="alert" aria-live="assertive"></div>
+                <div id="search-status" class="loading hidden" aria-live="polite">
+                    <span class="spinner dark"></span> Recherche en cours (sources externes)...
+                </div>
+            </div>
+
+            <!-- Personnes -->
+            <div class="card" id="persons-section">
+                <div class="flex between items-center" style="margin-bottom:16px;">
+                    <h2 style="margin:0;"><i data-lucide="users"></i> Personnes identifiees</h2>
+                </div>
+                <div id="persons-error" class="alert alert-error hidden" role="alert" aria-live="assertive"></div>
+                <div id="persons-loading" class="loading"><span class="spinner dark"></span> Chargement...</div>
+                <div class="table-wrap" aria-live="polite">
+                    <table id="persons-table" class="hidden">
+                        <thead><tr>
+                            <th>ID</th><th>Prenom</th><th>Nom</th><th>Score</th><th>Date</th><th>Actions</th>
+                        </tr></thead>
+                        <tbody id="persons-body"></tbody>
+                    </table>
+                </div>
+                <div id="persons-empty" class="empty-state hidden">
+                    <div class="empty-icon"><i data-lucide="user-x"></i></div>
+                    <h3>Aucune personne</h3>
+                    <p>Uploadez une image contenant un visage pour commencer.</p>
+                </div>
+                <div class="pagination" id="persons-pagination">
+                    <button class="btn btn-ghost btn-sm" id="persons-prev" disabled><i data-lucide="chevron-left"></i></button>
+                    <span class="page-info" id="persons-page-info"></span>
+                    <button class="btn btn-ghost btn-sm" id="persons-next" disabled><i data-lucide="chevron-right"></i></button>
+                </div>
+            </div>
+
+            <!-- Historique -->
+            <div class="card" id="history-section">
+                <div class="flex between items-center" style="margin-bottom:16px;">
+                    <h2 style="margin:0;"><i data-lucide="history"></i> Historique des recherches</h2>
+                    <button class="btn btn-ghost btn-sm" id="history-refresh"><i data-lucide="refresh-cw"></i> Rafraichir</button>
+                </div>
+                <div id="history-error" class="alert alert-error hidden" role="alert" aria-live="assertive"></div>
+                <div id="history-loading" class="loading"><span class="spinner dark"></span> Chargement...</div>
+                <div class="table-wrap" aria-live="polite">
+                    <table id="history-table" class="hidden">
+                        <thead><tr>
+                            <th>Requete</th><th>Type</th><th>Statut</th><th>Resultats</th><th>Date</th><th>Actions</th>
+                        </tr></thead>
+                        <tbody id="history-body"></tbody>
+                    </table>
+                </div>
+                <div id="history-empty" class="empty-state hidden">
+                    <div class="empty-icon"><i data-lucide="search-x"></i></div>
+                    <h3>Aucune recherche</h3>
+                    <p>Lancez une recherche OSINT ci-dessus.</p>
+                </div>
+                <div class="pagination" id="history-pagination">
+                    <button class="btn btn-ghost btn-sm" id="history-prev" disabled><i data-lucide="chevron-left"></i></button>
+                    <span class="page-info" id="history-page-info"></span>
+                    <button class="btn btn-ghost btn-sm" id="history-next" disabled><i data-lucide="chevron-right"></i></button>
+                </div>
+            </div>
+
         </div>
+    </div>
+</div>
 
-        <!-- Section 3 : Liste des personnes -->
-        <div class="section">
-            <h2>Personnes identifiees</h2>
-            <div id="persons-error" class="error-message hidden" role="alert" aria-live="assertive"></div>
-            <div id="persons-loading" class="loading">Chargement...</div>
-            <div class="table-wrap" aria-live="polite">
-                <table id="persons-table" class="hidden">
-                    <thead>
-                        <tr>
-                            <th scope="col">ID</th>
-                            <th scope="col">Prenom</th>
-                            <th scope="col">Nom</th>
-                            <th scope="col">Score</th>
-                            <th scope="col">Date</th>
-                            <th scope="col">Action</th>
-                        </tr>
-                    </thead>
-                    <tbody id="persons-body"></tbody>
-                </table>
-            </div>
-            <div id="persons-empty" class="loading hidden">Aucune personne enregistree.</div>
-            <div class="pagination" id="persons-pagination">
-                <button id="persons-prev" disabled>Precedent</button>
-                <span id="persons-page-info"></span>
-                <button id="persons-next" disabled>Suivant</button>
-            </div>
+<!-- Modal edition personne -->
+<div class="modal-overlay hidden" id="edit-modal">
+    <div class="modal">
+        <h3><i data-lucide="edit-3"></i> Editer la personne</h3>
+        <input type="hidden" id="edit-person-id">
+        <div class="field">
+            <label for="edit-first-name">Prenom</label>
+            <input class="input" type="text" id="edit-first-name" maxlength="100">
         </div>
-
-        <!-- Section 4 : Historique des recherches -->
-        <div class="section">
-            <h2>
-                Historique des recherches
-                <button class="btn-small" id="history-refresh" style="margin-left: 12px;">Rafraichir</button>
-            </h2>
-            <div id="history-error" class="error-message hidden" role="alert" aria-live="assertive"></div>
-            <div id="history-loading" class="loading">Chargement...</div>
-            <div class="table-wrap" aria-live="polite">
-                <table id="history-table" class="hidden">
-                    <thead>
-                        <tr>
-                            <th scope="col">Requete</th>
-                            <th scope="col">Type</th>
-                            <th scope="col">Resultats</th>
-                            <th scope="col">Date</th>
-                        </tr>
-                    </thead>
-                    <tbody id="history-body"></tbody>
-                </table>
-            </div>
-            <div id="history-empty" class="loading hidden">Aucune recherche enregistree.</div>
-            <div class="pagination" id="history-pagination">
-                <button id="history-prev" disabled>Precedent</button>
-                <span id="history-page-info"></span>
-                <button id="history-next" disabled>Suivant</button>
-            </div>
+        <div class="field">
+            <label for="edit-last-name">Nom</label>
+            <input class="input" type="text" id="edit-last-name" maxlength="100">
         </div>
+        <div class="field">
+            <label for="edit-notes">Notes</label>
+            <textarea class="input" id="edit-notes" rows="3" maxlength="5000"></textarea>
+        </div>
+        <div id="edit-error" class="alert alert-error hidden" role="alert"></div>
+        <div class="modal-actions">
+            <button class="btn btn-ghost" id="edit-cancel">Annuler</button>
+            <button class="btn btn-primary" id="edit-save">Enregistrer</button>
+        </div>
+    </div>
+</div>
 
-    </main>
+<div class="toast-container" id="toast-container"></div>
 
-    <script src="/static/js/api.js"></script>
-    <script src="/static/js/app.js"></script>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/app.js"></script>
+<script>lucide.createIcons();</script>
 </body>
 </html>

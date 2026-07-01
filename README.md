@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)
-![Tests](https://img.shields.io/badge/tests-156%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-164%20passed-brightgreen)
 ![License](https://img.shields.io/badge/licence-usage%20acad%C3%A9mique-orange)
 
 Plateforme OSINT (Open Source Intelligence) académique développée dans le cadre du **projet annuel ESGI** en cybersécurité (4e année). Elle permet la recherche, l'extraction et la corrélation d'entités à partir de sources publiques et légales, la reconnaissance faciale sur images statiques, et l'enrichissement automatique croisé entre les deux modules.
@@ -183,6 +183,34 @@ Chaque source renvoie une enveloppe commune, ce qui permet à l'enrichissement d
 ```
 
 Le champ `extracted` alimente l'enrichissement : `emails` → table emails, `domains`/`urls` → table sites, `ips` → champ `data` de la corrélation. Les sources s'ajoutent via un **registre déclaratif** `SOURCES` (aucun `if/elif` à modifier).
+
+### Module 8 — Refonte UI & Persistance des recherches
+Refonte complète de l'interface (design professionnel inspiré des outils OSINT type Maltego/Shodan) et correction d'un manque majeur : les recherches manuelles ne persistaient aucun résultat.
+
+**Persistance des recherches (table `SearchResult`)**
+Auparavant `POST /api/search` ne stockait qu'un compteur. Désormais chaque `OsintResult` du moteur est persisté dans la table `search_results` (mapping 1:1 : `source`, `entity`, `entity_type`, `data`, `extracted`) et consultable via l'API.
+
+**5 pages frontend** (HTML/CSS/JS vanilla, [vis.js](https://visjs.org) pour les graphes) :
+
+| Page | Route | Contenu |
+|------|-------|---------|
+| Login | `/login` | Connexion épurée, thème sombre |
+| Dashboard | `/dashboard` | Sidebar + 4 KPI + upload drag&drop + recherche (spinner/polling/toast) + tableaux personnes/historique |
+| Résultats | `/results?id=X` | Résultats groupés par source, badges d'entités cliquables, accordéon JSON, export |
+| Rapport | `/report?id=X` | Fiche personne éditable, onglets (emails/sites/corrélations/activité), mini-graphe |
+| Graphe | `/graph` | Graphe global interactif (personnes ↔ emails ↔ domaines ↔ IPs), filtres, légende |
+
+**Nouveaux endpoints API**
+
+| Endpoint | Rôle |
+|----------|------|
+| `GET /api/stats` | KPI : recherches, personnes, corrélations, dernière activité |
+| `GET /api/history/{id}` | Métadonnées d'une recherche |
+| `GET /api/history/{id}/results` | Contenu détaillé d'une recherche (par source) |
+| `GET /api/emails`, `GET /api/sites` | Listes (nœuds du graphe) |
+| `PATCH /api/persons/{id}` | Édition nom/notes d'une personne |
+
+**Design system** ([style.css](osint-platform/frontend/static/css/style.css)) : sidebar sombre `#1a1f2e` + contenu clair `#f8fafc`, accents bleu `#3b82f6` / vert `#10b981`, police **Inter**, icônes **Lucide**. Composants : cards, KPI, badges typés, onglets, modal, accordéon, toasts, dropzone, timeline, empty-states. CSP durcie avec allowlist des CDN utilisés.
 
 ## Prérequis
 
@@ -396,12 +424,16 @@ osint-platform/
 │   ├── test_facial.py          # Tests du moteur facial (17 tests)
 │   ├── test_rate_limiter.py    # Tests du rate limiter (2 tests)
 │   ├── test_report_api.py      # Tests de l'endpoint rapport (5 tests)
-│   ├── test_frontend_routes.py # Tests des routes frontend (6 tests)
-│   ├── test_security.py        # Tests sécurité (25 tests)
-│   └── test_sources.py         # Tests des 10 sources OSINT (30 tests)
+│   ├── test_frontend_routes.py # Tests des routes frontend (8 tests)
+│   ├── test_security.py        # Tests sécurité (29 tests)
+│   ├── test_sources.py         # Tests des 10 sources OSINT (30 tests)
+│   ├── test_cli.py             # Tests du CLI (4 tests)
+│   └── test_search_results.py  # Tests persistance recherches (2 tests)
 ├── frontend/
 │   ├── index.html              # Page de login
 │   ├── dashboard.html          # Dashboard principal
+│   ├── results.html            # Resultats d'une recherche
+│   ├── graph.html              # Graphe global (vis.js)
 │   ├── report.html             # Rapport par personne
 │   └── static/
 │       ├── css/style.css       # Styles globaux
@@ -437,13 +469,14 @@ python -m pytest tests/test_report_api.py -v    # 5 tests rapport personne
 python -m pytest tests/test_frontend_routes.py -v # 6 tests routes frontend
 python -m pytest tests/test_security.py -v        # 25 tests sécurité
 python -m pytest tests/test_sources.py -v         # 30 tests sources OSINT
+python -m pytest tests/test_search_results.py -v  # 2 tests persistance recherches
 
 # Lancer la suite sur PostgreSQL au lieu de SQLite (compatibilité)
 TEST_DATABASE_URL=postgresql+asyncpg://osint_user:<password>@localhost:5432/osint_test \
   python -m pytest tests/ -v
 ```
 
-**156 tests** couvrent :
+**164 tests** couvrent :
 - Authentification JWT (token valide, expiré, invalide, identifiants erronés)
 - Validation des inputs (injection SQL bloquée par enum Pydantic)
 - Rate limiting (429 après 10 requêtes/minute)
@@ -461,6 +494,8 @@ TEST_DATABASE_URL=postgresql+asyncpg://osint_user:<password>@localhost:5432/osin
 - Rate limiting global (blocage par IP, IP différente non bloquée)
 - RBAC (analyst 403 / admin 200 sur les endpoints sensibles)
 - Sources OSINT (10 sources : réponse OK, cas vide, 404, résilience réseau, freemium dormant/actif)
+- Persistance des recherches (`_run_search` écrit les résultats, endpoint 200/404)
+- Routes frontend (login, dashboard, results, report, graph)
 
 ## Stack technique
 

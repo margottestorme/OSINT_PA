@@ -1,5 +1,5 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
@@ -7,16 +7,21 @@ from app.core.config import get_settings
 from app.core.security import authenticate_user, create_access_token, require_role, verify_token
 from app.core.audit import create_audit_log, get_client_ip, resolve_user_id
 from app.db.session import get_db
-from app.db.models import Correlation, Email, Person, SearchHistory, Site
+from app.db.models import Correlation, Email, Person, SearchHistory, SearchResult, Site
 from app.schemas.schemas import (
     CorrelationResponse,
+    EmailResponse,
     HealthResponse,
     LoginRequest,
     PersonReportResponse,
     PersonResponse,
+    PersonUpdate,
+    SiteResponse,
     SearchHistoryResponse,
     SearchRequest,
     SearchResponse,
+    SearchResultResponse,
+    StatsResponse,
     TokenResponse,
 )
 from app.api.rate_limit import login_rate_limiter, search_rate_limiter
@@ -55,7 +60,7 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
 # --- Recherche OSINT ---
 
 async def _run_search(query: str, query_type: str) -> None:
-    """Tâche de fond : lance le moteur OSINT et enregistre l'historique."""
+    """Tâche de fond : lance le moteur OSINT, enregistre l'historique ET chaque résultat."""
     from app.osint.engine import correlate
     from app.db.session import async_session
 
@@ -69,9 +74,21 @@ async def _run_search(query: str, query_type: str) -> None:
                 result_count=len(results),
             )
             session.add(entry)
+            await session.flush()  # obtient entry.id pour rattacher les résultats
+
+            # Persistance de chaque OsintResult (Approche B) — mapping 1:1
+            for r in results:
+                session.add(SearchResult(
+                    search_id=entry.id,
+                    source=r.get("source", "unknown"),
+                    entity=r.get("entity", query),
+                    entity_type=r.get("type", query_type),
+                    data=r.get("data"),
+                    extracted=r.get("extracted"),
+                ))
             await session.commit()
 
-        logger.info(f"[search] Tâche terminée pour '{query}' ({query_type}) — {len(results)} résultat(s)")
+        logger.info(f"[search] Tâche terminée pour '{query}' ({query_type}) — {len(results)} résultat(s) persistés")
     except Exception as e:
         logger.error(f"[search] Erreur pendant la recherche '{query}' : {e}")
 
@@ -107,13 +124,39 @@ async def launch_search(
 
 @router.get("/api/correlations", response_model=list[CorrelationResponse], tags=["données"])
 async def list_correlations(
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     token_data: dict = Depends(require_role("admin")),
 ):
     result = await db.execute(
         select(Correlation).order_by(Correlation.created_at.desc()).limit(limit).offset(offset)
+    )
+    return result.scalars().all()
+
+
+@router.get("/api/emails", response_model=list[EmailResponse], tags=["données"])
+async def list_emails(
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    token_data: dict = Depends(require_role("admin")),
+):
+    result = await db.execute(
+        select(Email).order_by(Email.created_at.desc()).limit(limit).offset(offset)
+    )
+    return result.scalars().all()
+
+
+@router.get("/api/sites", response_model=list[SiteResponse], tags=["données"])
+async def list_sites(
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    token_data: dict = Depends(require_role("admin")),
+):
+    result = await db.execute(
+        select(Site).order_by(Site.discovered_at.desc()).limit(limit).offset(offset)
     )
     return result.scalars().all()
 
@@ -133,6 +176,47 @@ async def list_persons(
     return result.scalars().all()
 
 
+@router.patch("/api/persons/{person_id}", response_model=PersonResponse, tags=["données"])
+async def update_person(
+    person_id: int,
+    body: PersonUpdate,
+    db: AsyncSession = Depends(get_db),
+    token_data: dict = Depends(verify_token),
+):
+    """Édition du nom/notes d'une personne (champs fournis uniquement)."""
+    person = await db.get(Person, person_id)
+    if not person:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Personne introuvable")
+
+    updates = body.model_dump(exclude_unset=True)
+    for field, value in updates.items():
+        setattr(person, field, value)
+    await db.flush()
+    logger.info(f"[persons] Personne {person_id} mise à jour : {list(updates.keys())}")
+    return person
+
+
+# --- Statistiques (KPI dashboard) ---
+
+@router.get("/api/stats", response_model=StatsResponse, tags=["données"])
+async def get_stats(
+    db: AsyncSession = Depends(get_db),
+    token_data: dict = Depends(verify_token),
+):
+    """Compteurs pour le dashboard : recherches, personnes, corrélations, dernière activité."""
+    total_searches = await db.scalar(select(func.count()).select_from(SearchHistory))
+    total_persons = await db.scalar(select(func.count()).select_from(Person))
+    total_correlations = await db.scalar(select(func.count()).select_from(Correlation))
+    last_activity = await db.scalar(select(func.max(SearchHistory.created_at)))
+
+    return StatsResponse(
+        total_searches=total_searches or 0,
+        total_persons=total_persons or 0,
+        total_correlations=total_correlations or 0,
+        last_activity=last_activity,
+    )
+
+
 # --- Historique ---
 
 @router.get("/api/history", response_model=list[SearchHistoryResponse], tags=["données"])
@@ -144,6 +228,46 @@ async def list_history(
 ):
     result = await db.execute(
         select(SearchHistory).order_by(SearchHistory.created_at.desc()).limit(limit).offset(offset)
+    )
+    return result.scalars().all()
+
+
+@router.get("/api/history/{search_id}", response_model=SearchHistoryResponse, tags=["données"])
+async def get_search(
+    search_id: int,
+    db: AsyncSession = Depends(get_db),
+    token_data: dict = Depends(verify_token),
+):
+    """Métadonnées d'une recherche (requête, type, date, nombre de résultats)."""
+    search = await db.get(SearchHistory, search_id)
+    if not search:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recherche introuvable")
+    return search
+
+
+@router.get(
+    "/api/history/{search_id}/results",
+    response_model=list[SearchResultResponse],
+    tags=["données"],
+)
+async def get_search_results(
+    search_id: int,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    token_data: dict = Depends(verify_token),
+):
+    """Résultats détaillés d'une recherche manuelle (contenu réel, pas seulement le compteur)."""
+    search = await db.get(SearchHistory, search_id)
+    if not search:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recherche introuvable")
+
+    result = await db.execute(
+        select(SearchResult)
+        .where(SearchResult.search_id == search_id)
+        .order_by(SearchResult.id)
+        .limit(limit)
+        .offset(offset)
     )
     return result.scalars().all()
 

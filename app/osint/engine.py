@@ -418,17 +418,41 @@ async def _resolve(domain: str, rdtype: str) -> list[str]:
 
 
 async def _source_crtsh(domain: str) -> OsintResult | None:
-    """Sous-domaines via les logs de Certificate Transparency (crt.sh)."""
+    """Sous-domaines via les logs de Certificate Transparency (crt.sh).
+
+    crt.sh est fréquemment surchargé (502/503) : on effectue jusqu'à 3 tentatives
+    avec backoff exponentiel avant d'abandonner silencieusement.
+    """
     await _rate_limiter.acquire()
     logger.info(f"[crtsh] Recherche sous-domaines pour {domain}")
 
+    certs = None
+    last_exc = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=_timeout, headers=_UA) as client:
+                resp = await client.get(
+                    "https://crt.sh/", params={"q": f"%.{domain}", "output": "json"}
+                )
+            if resp.status_code >= 500:
+                raise httpx.HTTPStatusError(
+                    f"crt.sh {resp.status_code}", request=resp.request, response=resp
+                )
+            resp.raise_for_status()
+            certs = resp.json()
+            break
+        except Exception as e:
+            last_exc = e
+            if attempt < 2:
+                wait = 1.5 * (attempt + 1)  # 1.5s puis 3s
+                logger.debug(f"[crtsh] tentative {attempt + 1} échouée ({e}), retry dans {wait}s")
+                await asyncio.sleep(wait)
+
+    if certs is None:
+        logger.warning(f"[crtsh] Échec pour {domain} après 3 tentatives : {last_exc}")
+        return None
+
     try:
-        async with httpx.AsyncClient(timeout=_timeout, headers=_UA) as client:
-            resp = await client.get(
-                "https://crt.sh/", params={"q": f"%.{domain}", "output": "json"}
-            )
-        resp.raise_for_status()
-        certs = resp.json()
         if not certs:
             return None
 

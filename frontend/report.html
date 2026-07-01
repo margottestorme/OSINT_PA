@@ -5,89 +5,137 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OSINT Platform — Rapport</title>
     <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/dist/dist/vis-network.min.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 </head>
 <body>
-    <header>
-        <h1>OSINT Platform</h1>
+<div class="app-shell">
+
+    <aside class="sidebar">
+        <div class="brand">
+            <span class="logo"><i data-lucide="radar"></i></span>
+            OSINT Platform
+        </div>
         <nav>
-            <a href="/dashboard" class="btn-secondary">Retour au dashboard</a>
-            <button id="logout-btn" class="btn-secondary">Deconnexion</button>
+            <a class="nav-link" href="/dashboard"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+            <a class="nav-link active" href="/dashboard#persons-section"><i data-lucide="users"></i> Personnes</a>
+            <a class="nav-link" href="/graph"><i data-lucide="share-2"></i> Graphe</a>
         </nav>
-    </header>
-
-    <main class="dashboard">
-
-        <div id="report-error" class="error-message hidden" role="alert" aria-live="assertive"></div>
-        <div id="report-loading" class="loading">Chargement du rapport...</div>
-
-        <div id="report-content" class="hidden">
-
-            <!-- Infos personne -->
-            <div class="section">
-                <h2>Personne</h2>
-                <div class="person-card" id="person-info" aria-live="polite"></div>
+        <div class="sidebar-footer">
+            <div class="user-chip">
+                <span class="avatar" id="user-avatar">AD</span>
+                <span id="user-info">admin</span>
             </div>
+            <button id="logout-btn" class="btn btn-ghost btn-sm" style="width:100%; color:var(--text-on-dark); border-color:var(--border-dark);">
+                <i data-lucide="log-out"></i> Deconnexion
+            </button>
+        </div>
+    </aside>
 
-            <!-- Emails -->
-            <div class="section">
-                <h2>Emails trouves</h2>
-                <div id="emails-empty" class="loading hidden">Aucun email trouve.</div>
-                <div class="table-wrap" aria-live="polite">
-                    <table id="emails-table" class="hidden">
-                        <thead>
-                            <tr>
-                                <th scope="col">Email</th>
-                                <th scope="col">Source</th>
-                                <th scope="col">Date</th>
-                            </tr>
-                        </thead>
-                        <tbody id="emails-body"></tbody>
-                    </table>
-                </div>
+    <div class="main">
+        <div class="topbar">
+            <div>
+                <h1>Rapport personne</h1>
+                <div class="subtitle">Fiche detaillee et correlations</div>
             </div>
-
-            <!-- Sites -->
-            <div class="section">
-                <h2>Sites decouverts</h2>
-                <div id="sites-empty" class="loading hidden">Aucun site decouvert.</div>
-                <div class="table-wrap" aria-live="polite">
-                    <table id="sites-table" class="hidden">
-                        <thead>
-                            <tr>
-                                <th scope="col">URL</th>
-                                <th scope="col">Serveur</th>
-                                <th scope="col">Date</th>
-                            </tr>
-                        </thead>
-                        <tbody id="sites-body"></tbody>
-                    </table>
-                </div>
+            <div class="flex gap-8">
+                <a class="btn btn-ghost btn-sm" href="/dashboard#persons-section"><i data-lucide="arrow-left"></i> Dashboard</a>
+                <button class="btn btn-primary btn-sm" id="export-btn" disabled><i data-lucide="download"></i> Exporter JSON</button>
             </div>
-
-            <!-- Correlations -->
-            <div class="section">
-                <h2>Correlations</h2>
-                <div id="correlations-empty" class="loading hidden">Aucune correlation trouvee.</div>
-                <div class="table-wrap" aria-live="polite">
-                    <table id="correlations-table" class="hidden">
-                        <thead>
-                            <tr>
-                                <th scope="col">Email ID</th>
-                                <th scope="col">Site ID</th>
-                                <th scope="col">Score</th>
-                                <th scope="col">Date</th>
-                            </tr>
-                        </thead>
-                        <tbody id="correlations-body"></tbody>
-                    </table>
-                </div>
-            </div>
-
         </div>
 
-    </main>
+        <div class="content">
+            <div id="report-error" class="alert alert-error hidden" role="alert" aria-live="assertive"></div>
+            <div id="report-loading" class="loading"><span class="spinner dark"></span> Chargement du rapport...</div>
 
-    <script src="/static/js/api.js"></script>
-    <script src="/static/js/app.js"></script>
+            <div id="report-content" class="hidden">
+
+                <!-- Header personne -->
+                <div class="card">
+                    <div class="flex between items-center" style="flex-wrap:wrap; gap:16px;">
+                        <div class="flex gap-12 items-center">
+                            <div class="avatar-lg" id="person-avatar">?</div>
+                            <div>
+                                <div style="font-size:1.3rem; font-weight:700;" id="person-name">—</div>
+                                <div class="flex gap-8 items-center" style="margin-top:6px;">
+                                    <span class="badge" id="person-score">—</span>
+                                    <span class="text-muted mono" id="person-id">—</span>
+                                    <span class="text-muted" id="person-date">—</span>
+                                </div>
+                            </div>
+                        </div>
+                        <button class="btn btn-ghost btn-sm" id="person-edit"><i data-lucide="edit-3"></i> Editer</button>
+                    </div>
+                    <div id="person-notes" class="alert hidden" style="background:#fffbeb; border:1px solid #fde68a; color:#92400e; margin-top:16px; margin-bottom:0;"></div>
+                </div>
+
+                <!-- Mini graphe -->
+                <div class="card">
+                    <h2><i data-lucide="share-2"></i> Graphe de correlations</h2>
+                    <div class="graph-container" id="person-graph"></div>
+                    <div id="graph-empty" class="text-muted hidden" style="text-align:center; padding:20px; font-size:0.85rem;">
+                        Aucune entite correlee a afficher.
+                    </div>
+                </div>
+
+                <!-- Onglets -->
+                <div class="card">
+                    <div class="tabs" id="report-tabs">
+                        <button class="tab active" data-tab="emails"><i data-lucide="mail"></i> Emails <span class="tab-count" id="count-emails">0</span></button>
+                        <button class="tab" data-tab="sites"><i data-lucide="globe"></i> Sites <span class="tab-count" id="count-sites">0</span></button>
+                        <button class="tab" data-tab="correlations"><i data-lucide="git-merge"></i> Correlations <span class="tab-count" id="count-correlations">0</span></button>
+                        <button class="tab" data-tab="activity"><i data-lucide="activity"></i> Activite</button>
+                    </div>
+
+                    <div class="tab-panel active" id="panel-emails">
+                        <div class="table-wrap"><table><thead><tr><th>Email</th><th>Source</th><th>Date</th></tr></thead>
+                            <tbody id="emails-body"></tbody></table></div>
+                        <div id="emails-empty" class="empty-state hidden"><div class="empty-icon"><i data-lucide="mail-x"></i></div><h3>Aucun email</h3></div>
+                    </div>
+                    <div class="tab-panel" id="panel-sites">
+                        <div class="table-wrap"><table><thead><tr><th>URL</th><th>Serveur</th><th>Date</th></tr></thead>
+                            <tbody id="sites-body"></tbody></table></div>
+                        <div id="sites-empty" class="empty-state hidden"><div class="empty-icon"><i data-lucide="globe"></i></div><h3>Aucun site</h3></div>
+                    </div>
+                    <div class="tab-panel" id="panel-correlations">
+                        <div class="table-wrap"><table><thead><tr><th>Email ID</th><th>Site ID</th><th>Score</th><th>IPs</th><th>Date</th></tr></thead>
+                            <tbody id="correlations-body"></tbody></table></div>
+                        <div id="correlations-empty" class="empty-state hidden"><div class="empty-icon"><i data-lucide="git-merge"></i></div><h3>Aucune correlation</h3></div>
+                    </div>
+                    <div class="tab-panel" id="panel-activity">
+                        <div class="timeline" id="activity-timeline"></div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal edition -->
+<div class="modal-overlay hidden" id="edit-modal">
+    <div class="modal">
+        <h3><i data-lucide="edit-3"></i> Editer la personne</h3>
+        <input type="hidden" id="edit-person-id">
+        <div class="field"><label for="edit-first-name">Prenom</label>
+            <input class="input" type="text" id="edit-first-name" maxlength="100"></div>
+        <div class="field"><label for="edit-last-name">Nom</label>
+            <input class="input" type="text" id="edit-last-name" maxlength="100"></div>
+        <div class="field"><label for="edit-notes">Notes</label>
+            <textarea class="input" id="edit-notes" rows="3" maxlength="5000"></textarea></div>
+        <div id="edit-error" class="alert alert-error hidden" role="alert"></div>
+        <div class="modal-actions">
+            <button class="btn btn-ghost" id="edit-cancel">Annuler</button>
+            <button class="btn btn-primary" id="edit-save">Enregistrer</button>
+        </div>
+    </div>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/app.js"></script>
+<script>lucide.createIcons();</script>
 </body>
 </html>

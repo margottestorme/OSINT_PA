@@ -71,6 +71,16 @@ async def report_page():
     return (FRONTEND_DIR / "report.html").read_text(encoding="utf-8")
 
 
+@app.get("/results", response_class=HTMLResponse, include_in_schema=False)
+async def results_page():
+    return (FRONTEND_DIR / "results.html").read_text(encoding="utf-8")
+
+
+@app.get("/graph", response_class=HTMLResponse, include_in_schema=False)
+async def graph_page():
+    return (FRONTEND_DIR / "graph.html").read_text(encoding="utf-8")
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Erreur non gérée sur {request.method} {request.url.path} : {exc}")

@@ -175,12 +175,14 @@ async def test_audit_report_viewed(client, auth_headers):
 # 3. En-têtes de sécurité
 # =============================================================
 
+from app.api.middleware import _CSP
+
 EXPECTED_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "X-XSS-Protection": "1; mode=block",
     "Referrer-Policy": "strict-origin-when-cross-origin",
-    "Content-Security-Policy": "default-src 'self'",
+    "Content-Security-Policy": _CSP,
 }
 
 
@@ -212,6 +214,8 @@ async def test_security_headers_on_dashboard(client):
 ADMIN_ONLY_ENDPOINTS = [
     "/api/persons",
     "/api/correlations",
+    "/api/emails",
+    "/api/sites",
     "/api/history",
     "/api/faces/persons",
 ]

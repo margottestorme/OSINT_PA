@@ -33,6 +33,7 @@ class Person(Base):
     confidence_score: Mapped[float] = mapped_column(Float, default=0.0)
     embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
     image_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -107,6 +108,33 @@ class SearchHistory(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+    results: Mapped[list["SearchResult"]] = relationship(
+        back_populates="search", cascade="all, delete-orphan"
+    )
+
+
+class SearchResult(Base):
+    """Résultat brut d'une recherche manuelle (Approche B) : une ligne par OsintResult.
+
+    Découplé du modèle person-centrique — mappe 1:1 le format OsintResult du moteur.
+    """
+    __tablename__ = "search_results"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    search_id: Mapped[int] = mapped_column(
+        ForeignKey("search_history.id"), index=True
+    )
+    source: Mapped[str] = mapped_column(String(50))
+    entity: Mapped[str] = mapped_column(Text)
+    entity_type: Mapped[str] = mapped_column(String(50))
+    data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    extracted: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    search: Mapped["SearchHistory"] = relationship(back_populates="results")
 
 
 class AuditLog(Base):

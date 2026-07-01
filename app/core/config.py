@@ -22,9 +22,11 @@ class Settings(BaseSettings):
 
     APP_NAME: str = "OSINT-Platform"
     APP_VERSION: str = "0.1.0"
-    # Sécurité (S7) : défaut False — pas d'echo SQL ni d'exposition par défaut.
+    # Sécurité (S7) : défaut False — pas d'exposition par défaut.
     # Le développement active DEBUG=true via le .env.
     DEBUG: bool = False
+    # A5 : echo SQL découplé de DEBUG (défaut False) — évite d'inonder les logs.
+    SQL_ECHO: bool = False
     LOG_LEVEL: str = "DEBUG"
 
     API_PREFIX: str = "/api"

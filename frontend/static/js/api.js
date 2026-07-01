@@ -111,8 +111,33 @@ const API = (() => {
         return _request("GET", "/api/history?limit=" + limit + "&offset=" + offset);
     }
 
+    async function getSearch(searchId) {
+        return _request("GET", "/api/history/" + searchId);
+    }
+
+    async function getSearchResults(searchId, limit = 100, offset = 0) {
+        return _request("GET", "/api/history/" + searchId + "/results?limit=" + limit + "&offset=" + offset);
+    }
+
     async function listCorrelations(limit = 20, offset = 0) {
         return _request("GET", "/api/correlations?limit=" + limit + "&offset=" + offset);
+    }
+
+    async function listEmails(limit = 200, offset = 0) {
+        return _request("GET", "/api/emails?limit=" + limit + "&offset=" + offset);
+    }
+
+    async function listSites(limit = 200, offset = 0) {
+        return _request("GET", "/api/sites?limit=" + limit + "&offset=" + offset);
+    }
+
+    // --- Stats & édition ---
+    async function getStats() {
+        return _request("GET", "/api/stats");
+    }
+
+    async function updatePerson(personId, body) {
+        return _request("PATCH", "/api/persons/" + personId, { json: body });
     }
 
     return {
@@ -128,6 +153,12 @@ const API = (() => {
         listPersons,
         getPersonReport,
         listHistory,
+        getSearch,
+        getSearchResults,
         listCorrelations,
+        listEmails,
+        listSites,
+        getStats,
+        updatePerson,
     };
 })();

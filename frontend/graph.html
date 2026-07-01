@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OSINT Platform — Graphe global</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/dist/dist/vis-network.min.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+</head>
+<body>
+<div class="app-shell">
+
+    <aside class="sidebar">
+        <div class="brand">
+            <span class="logo"><i data-lucide="radar"></i></span>
+            OSINT Platform
+        </div>
+        <nav>
+            <a class="nav-link" href="/dashboard"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+            <a class="nav-link" href="/dashboard#persons-section"><i data-lucide="users"></i> Personnes</a>
+            <a class="nav-link" href="/dashboard#history-section"><i data-lucide="history"></i> Historique</a>
+            <a class="nav-link active" href="/graph"><i data-lucide="share-2"></i> Graphe</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="user-chip">
+                <span class="avatar" id="user-avatar">AD</span>
+                <span id="user-info">admin</span>
+            </div>
+            <button id="logout-btn" class="btn btn-ghost btn-sm" style="width:100%; color:var(--text-on-dark); border-color:var(--border-dark);">
+                <i data-lucide="log-out"></i> Deconnexion
+            </button>
+        </div>
+    </aside>
+
+    <div class="main graph-main">
+        <div class="graph-toolbar">
+            <div class="tb-stats">
+                <div class="tb-stat"><strong id="g-persons">0</strong> personnes</div>
+                <div class="tb-stat"><strong id="g-emails">0</strong> emails</div>
+                <div class="tb-stat"><strong id="g-sites">0</strong> sites</div>
+                <div class="tb-stat"><strong id="g-correlations">0</strong> correlations</div>
+            </div>
+            <div class="tb-filters" id="graph-filters">
+                <label class="filter-check"><input type="checkbox" data-filter="persons" checked> Personnes</label>
+                <label class="filter-check"><input type="checkbox" data-filter="emails" checked> Emails</label>
+                <label class="filter-check"><input type="checkbox" data-filter="sites" checked> Sites</label>
+                <label class="filter-check"><input type="checkbox" data-filter="ips" checked> IPs</label>
+            </div>
+            <div class="flex gap-8" style="margin-left:auto;">
+                <button class="btn btn-ghost btn-sm" id="graph-fit"><i data-lucide="maximize"></i> Recentrer</button>
+                <button class="btn btn-ghost btn-sm" id="graph-refresh"><i data-lucide="refresh-cw"></i> Rafraichir</button>
+            </div>
+        </div>
+
+        <div class="graph-stack">
+            <div id="global-graph"></div>
+
+            <div class="graph-legend">
+                <h4>Legende</h4>
+                <div class="legend-item"><span class="legend-shape circle"></span> Personne</div>
+                <div class="legend-item"><span class="legend-shape square"></span> Email</div>
+                <div class="legend-item"><span class="legend-shape diamond"></span> Site / domaine</div>
+                <div class="legend-item"><span class="legend-shape triangle"></span> Adresse IP</div>
+            </div>
+
+            <div class="graph-overlay-empty hidden" id="graph-empty">
+                <div class="empty-state">
+                    <div class="empty-icon"><i data-lucide="share-2"></i></div>
+                    <h3>Aucune donnee a visualiser</h3>
+                    <p>Uploadez des visages et lancez des recherches pour peupler le graphe.</p>
+                </div>
+            </div>
+
+            <div id="graph-loading" class="graph-overlay-empty">
+                <div class="loading"><span class="spinner dark"></span> Chargement du graphe...</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/app.js"></script>
+<script>lucide.createIcons();</script>
+</body>
+</html>
