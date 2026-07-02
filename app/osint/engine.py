@@ -11,6 +11,7 @@ import dns.resolver
 from loguru import logger
 
 from app.core.config import get_settings
+from app.osint.scraper import scrape_batch
 from app.osint.rate_limiter import RateLimiter
 
 _nlp = spacy.load("fr_core_news_sm")
@@ -741,3 +742,93 @@ async def _source_hunter(email: str) -> OsintResult | None:
 # Enregistrement freemium (dormant tant que la clé n'est pas fournie)
 SOURCES["domain"].extend([_source_virustotal, _source_otx])
 SOURCES["email"].append(_source_hunter)
+
+
+# =============================================================
+# Source scraping (BeautifulSoup) — enrichissement par contenu de page
+# =============================================================
+
+def _ddg_urls(ddg: dict) -> list[str]:
+    """Extrait les URLs exploitables d'une réponse DuckDuckGo Instant Answer."""
+    urls: list[str] = []
+    if ddg.get("AbstractURL"):
+        urls.append(ddg["AbstractURL"])
+    for topic in ddg.get("RelatedTopics", []):
+        if not isinstance(topic, dict):
+            continue
+        if topic.get("FirstURL"):
+            urls.append(topic["FirstURL"])
+        for sub in topic.get("Topics", []):
+            if isinstance(sub, dict) and sub.get("FirstURL"):
+                urls.append(sub["FirstURL"])
+    # Déduplication en conservant l'ordre
+    seen: list[str] = []
+    for u in urls:
+        if u not in seen:
+            seen.append(u)
+    return seen
+
+
+async def _source_scraper(entity: str, entity_type: str) -> OsintResult | None:
+    """Scrape le contenu des pages liées à l'entité (max 3), agrège les entités.
+
+    - email  : pages DuckDuckGo mentionnant l'email
+    - domain : page principale du domaine
+    - name   : pages Wikipedia retournées par _source_wikipedia
+    """
+    logger.info(f"[scraper] Source scraping {entity_type} pour {entity}")
+    try:
+        if entity_type == "domain":
+            urls = [f"https://{entity}"]
+        elif entity_type == "email":
+            ddg = await _duckduckgo_search(entity)
+            urls = _ddg_urls(ddg)
+        elif entity_type == "name":
+            wiki = await _source_wikipedia(entity)
+            urls = list(wiki["extracted"]["urls"]) if wiki else []
+        else:
+            return None
+
+        if not urls:
+            logger.debug(f"[scraper] Aucune URL à scraper pour {entity}")
+            return None
+
+        scraped = await scrape_batch(urls, max_pages=3)
+        if not scraped:
+            return None
+
+        emails: set[str] = set()
+        domains: set[str] = set()
+        out_urls: set[str] = set()
+        names: list[str] = []
+        phones: set[str] = set()
+        for page in scraped:
+            emails.update(page.get("emails", []))
+            domains.update(page.get("domains", []))
+            out_urls.update(page.get("urls", []))
+            names.extend(page.get("names", []))
+            phones.update(page.get("phones", []))
+
+        logger.info(
+            f"[scraper] {entity} → {len(scraped)} page(s) scrapée(s), "
+            f"{len(emails)} email(s), {len(domains)} domaine(s), {len(phones)} téléphone(s)"
+        )
+        return _normalize(
+            "scraper", entity, entity_type,
+            data={"pages": scraped, "phones": sorted(phones)},
+            extracted={
+                "emails": sorted(emails),
+                "domains": sorted(domains),
+                "urls": sorted(out_urls)[:30],
+                "names": names[:20],
+            },
+        )
+    except Exception as e:
+        logger.warning(f"[scraper] Échec pour {entity} ({entity_type}) : {e}")
+        return None
+
+
+# Enregistrement du scraper sur les 3 types
+SOURCES["email"].append(_source_scraper)
+SOURCES["domain"].append(_source_scraper)
+SOURCES["name"].append(_source_scraper)

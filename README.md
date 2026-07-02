@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)
-![Tests](https://img.shields.io/badge/tests-180%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-208%20passed-brightgreen)
 ![License](https://img.shields.io/badge/licence-usage%20acad%C3%A9mique-orange)
 
 Plateforme OSINT (Open Source Intelligence) académique développée dans le cadre du **projet annuel ESGI** en cybersécurité (4e année). Elle permet la recherche, l'extraction et la corrélation d'entités à partir de sources publiques et légales, la reconnaissance faciale sur images statiques, et l'enrichissement automatique croisé entre les deux modules.
@@ -238,6 +238,37 @@ Un worker de capture ([worker.py](osint-platform/app/facial/worker.py)) tourne d
 
 **Contraintes respectées** : aucune frame écrite sur le disque, frames supprimées de la mémoire après traitement, JWT requis partout sauf `/feed`, **dégradation propre sans webcam** (message clair, bouton désactivé, endpoints renvoient `available: false` / `503`), messages OpenCV silencés (redirection stderr).
 
+### Module 10 — Scraping BeautifulSoup
+Enrichissement OSINT par **contenu de page web** : le moteur récupère et analyse le HTML des pages liées à une entité pour en extraire de nouvelles données. Scraping **léger et respectueux** (sources publiques uniquement, jamais de scraping agressif), branché sur le registre `SOURCES` comme les autres sources.
+
+**`fetch_page` — récupération sécurisée d'une page**
+- **robots.txt respecté** : le fichier de l'hôte est lu et interrogé (`RobotFileParser`) avant toute récupération ; absent, illisible ou injoignable → autorisé (permissif standard)
+- **Blacklist réseaux sociaux** : `facebook.com`, `twitter.com`, `x.com`, `instagram.com`, `linkedin.com`, `tiktok.com` sont refusés d'emblée (ToS / robots stricts), **sans aucune requête réseau**
+- **Garde-fous** : taille max **1 Mo**, timeout **10s** (httpx), User-Agent descriptif, résilience totale (toute erreur → `None`)
+
+**`scrape_entities` — extraction d'entités depuis le HTML**
+Nettoyage préalable (balises `<script>` / `<style>` / `<noscript>` retirées) via BeautifulSoup + lxml, puis extraction :
+- **Emails** (regex, triés et dédupliqués)
+- **Téléphones** au format international (préfixe `+` obligatoire pour limiter le bruit)
+- **Domaines** externes (hôtes différents de la page courante, hors blacklist)
+- **Noms** (`<title>`, `<h1>`, `<h2>`) et **description** (`<meta name="description">`)
+- **URLs** absolues collectées (max 20)
+
+**`scrape_batch` — traitement par lot**
+- **Maximum 3 pages** par entité (`max_pages=3`)
+- **Rate limiting 2s** entre chaque page (le même limiter que les autres requêtes externes)
+- Les erreurs individuelles sont ignorées : une page qui échoue n'interrompt pas le lot
+
+**Intégration dans les 3 types de recherche** — la source `_source_scraper` est enregistrée sur `email`, `domain` et `name` :
+
+| Type | Pages scrapées |
+|------|----------------|
+| `email` | Pages retournées par DuckDuckGo mentionnant l'email |
+| `domain` | Page principale du domaine (`https://<domaine>`) |
+| `name` | Pages Wikipedia retournées par la source Wikipedia |
+
+Les entités agrégées (emails, domaines, urls, noms, téléphones) alimentent l'enrichissement au même titre que les autres sources, via l'enveloppe `OsintResult` normalisée.
+
 ## Prérequis
 
 - Python 3.11+
@@ -433,7 +464,8 @@ osint-platform/
 │   ├── osint/
 │   │   ├── correlator.py       # Enrichissement itératif facial→OSINT (3 niveaux)
 │   │   ├── engine.py           # Moteur OSINT (DuckDuckGo, WHOIS, DNS, spaCy)
-│   │   └── rate_limiter.py     # Rate limiter pour requêtes externes (2s min)
+│   │   ├── rate_limiter.py     # Rate limiter pour requêtes externes (2s min)
+│   │   └── scraper.py          # Scraping léger BeautifulSoup (robots.txt, blacklist)
 │   ├── schemas/
 │   │   └── schemas.py          # Schemas Pydantic (validation I/O)
 │   ├── cli.py                  # CLI gestion utilisateurs
@@ -453,6 +485,7 @@ osint-platform/
 │   ├── test_frontend_routes.py # Tests des routes frontend (8 tests)
 │   ├── test_security.py        # Tests sécurité (29 tests)
 │   ├── test_sources.py         # Tests des 10 sources OSINT (30 tests)
+│   ├── test_scraper.py         # Tests du scraping BeautifulSoup (28 tests)
 │   ├── test_cli.py             # Tests du CLI (4 tests)
 │   ├── test_search_results.py  # Tests persistance recherches (2 tests)
 │   └── test_stream.py          # Tests stream webcam (16 tests)
@@ -497,6 +530,7 @@ python -m pytest tests/test_report_api.py -v    # 5 tests rapport personne
 python -m pytest tests/test_frontend_routes.py -v # 6 tests routes frontend
 python -m pytest tests/test_security.py -v        # 25 tests sécurité
 python -m pytest tests/test_sources.py -v         # 30 tests sources OSINT
+python -m pytest tests/test_scraper.py -v         # 28 tests scraping BeautifulSoup
 python -m pytest tests/test_search_results.py -v  # 2 tests persistance recherches
 python -m pytest tests/test_stream.py -v          # 16 tests stream webcam
 
@@ -505,7 +539,7 @@ TEST_DATABASE_URL=postgresql+asyncpg://osint_user:<password>@localhost:5432/osin
   python -m pytest tests/ -v
 ```
 
-**180 tests** couvrent :
+**208 tests** couvrent :
 - Authentification JWT (token valide, expiré, invalide, identifiants erronés)
 - Validation des inputs (injection SQL bloquée par enum Pydantic)
 - Rate limiting (429 après 10 requêtes/minute)
@@ -523,6 +557,7 @@ TEST_DATABASE_URL=postgresql+asyncpg://osint_user:<password>@localhost:5432/osin
 - Rate limiting global (blocage par IP, IP différente non bloquée)
 - RBAC (analyst 403 / admin 200 sur les endpoints sensibles)
 - Sources OSINT (10 sources : réponse OK, cas vide, 404, résilience réseau, freemium dormant/actif)
+- Scraping BeautifulSoup (blacklist réseaux sociaux, robots.txt, taille max, extraction d'entités, lot 3 pages, rate limiting)
 - Persistance des recherches (`_run_search` écrit les résultats, endpoint 200/404)
 - Routes frontend (login, dashboard, results, report, graph, stream)
 - Stream webcam (détection caméra, worker start/stop, endpoints, générateur MJPEG)
@@ -562,6 +597,7 @@ Le moteur OSINT utilise **exclusivement des sources publiques et légales** :
 - **DuckDuckGo Instant Answer API** : API publique, pas de scraping
 - **WHOIS** : données d'enregistrement de domaines (publiques)
 - **DNS MX** : enregistrements DNS publics
+- **Scraping web léger** (Module 10) : uniquement des pages publiques, **robots.txt respecté**, réseaux sociaux exclus, taille et fréquence plafonnées
 
 Aucun scraping agressif n'est effectué. Un **rate limiting de 2 secondes minimum** est appliqué entre chaque requête externe pour respecter les conditions d'utilisation des services interrogés.
 
