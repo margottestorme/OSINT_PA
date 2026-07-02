@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OSINT Platform — Stream Webcam</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+<div class="app-shell">
+
+    <aside class="sidebar">
+        <div class="brand">
+            <span class="logo"><i data-lucide="radar"></i></span>
+            OSINT Platform
+        </div>
+        <nav>
+            <a class="nav-link" href="/dashboard"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+            <a class="nav-link" href="/dashboard#persons-section"><i data-lucide="users"></i> Personnes</a>
+            <a class="nav-link" href="/dashboard#history-section"><i data-lucide="history"></i> Historique</a>
+            <a class="nav-link" href="/graph"><i data-lucide="share-2"></i> Graphe</a>
+            <a class="nav-link active" href="/stream"><i data-lucide="video"></i> Stream Webcam</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="user-chip">
+                <span class="avatar" id="user-avatar">AD</span>
+                <span id="user-info">admin</span>
+            </div>
+            <button id="logout-btn" class="btn btn-ghost btn-sm" style="width:100%; color:var(--text-on-dark); border-color:var(--border-dark);">
+                <i data-lucide="log-out"></i> Deconnexion
+            </button>
+        </div>
+    </aside>
+
+    <div class="main">
+        <div class="topbar">
+            <div>
+                <h1>Stream Webcam</h1>
+                <div class="subtitle">Detection et reconnaissance faciale en temps reel</div>
+            </div>
+        </div>
+
+        <div class="content">
+            <div class="rgpd-notice" style="margin-bottom:20px;">
+                <i data-lucide="shield-alert"></i>
+                <span><strong>Avertissement RGPD (article 9).</strong> Ce module traite des donnees biometriques en temps reel a des fins strictement academiques.
+                Le flux n'est jamais enregistre sur le disque, aucune image n'est conservee, et les frames sont supprimees de la memoire apres traitement.
+                N'utilisez cette fonctionnalite qu'avec le consentement explicite des personnes filmees.</span>
+            </div>
+
+            <div class="stream-layout">
+
+                <!-- Zone video -->
+                <div class="video-stage" id="video-stage">
+                    <img id="video-feed" alt="Flux webcam" class="hidden">
+                    <div class="video-placeholder" id="video-placeholder">
+                        <i data-lucide="video-off"></i>
+                        <p id="placeholder-text">Flux arrete. Cliquez sur « Demarrer » pour lancer la capture.</p>
+                    </div>
+                </div>
+
+                <!-- Panneau de controle -->
+                <div>
+                    <div class="card">
+                        <h2><i data-lucide="sliders-horizontal"></i> Controle</h2>
+                        <button class="btn btn-primary" id="toggle-btn" style="width:100%;" disabled>
+                            <i data-lucide="play"></i> <span id="toggle-label">Demarrer</span>
+                        </button>
+                        <div id="stream-error" class="alert alert-error hidden" role="alert" aria-live="assertive" style="margin-top:12px; margin-bottom:0;"></div>
+
+                        <div style="margin-top:16px;">
+                            <div class="stat-block">
+                                <span class="flex items-center gap-8"><span class="status-dot off" id="status-dot"></span> Statut</span>
+                                <span class="stat-val" id="stat-status">Arrete</span>
+                            </div>
+                            <div class="stat-block">
+                                <span class="flex items-center gap-8"><i data-lucide="gauge" style="width:16px;"></i> FPS</span>
+                                <span class="stat-val" id="stat-fps">—</span>
+                            </div>
+                            <div class="stat-block">
+                                <span class="flex items-center gap-8"><i data-lucide="scan-face" style="width:16px;"></i> Visages detectes</span>
+                                <span class="stat-val" id="stat-faces">—</span>
+                            </div>
+                            <div class="stat-block">
+                                <span class="flex items-center gap-8"><i data-lucide="user-check" style="width:16px;"></i> Correspondances</span>
+                                <span class="stat-val" id="stat-matches">—</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Derniere identification -->
+                    <div class="card" id="identity-card">
+                        <h2><i data-lucide="user-search"></i> Derniere identification</h2>
+                        <div id="identity-empty" class="text-muted" style="font-size:0.88rem;">Aucune personne identifiee pour l'instant.</div>
+                        <div id="identity-match" class="hidden">
+                            <div style="font-size:1.05rem; font-weight:700;" id="match-name">—</div>
+                            <div class="badge" id="match-score" style="margin-top:6px;">—</div>
+                            <a class="btn btn-primary btn-sm" id="match-report" style="width:100%; margin-top:14px;"><i data-lucide="file-text"></i> Voir le rapport</a>
+                        </div>
+                        <div id="identity-new" class="hidden">
+                            <div class="flex items-center gap-8" style="color:var(--warning); font-weight:600; font-size:0.9rem;">
+                                <i data-lucide="user-plus" style="width:16px;"></i> Nouveau visage detecte
+                            </div>
+                            <button class="btn btn-success btn-sm" id="register-btn" style="width:100%; margin-top:14px;"><i data-lucide="save"></i> Enregistrer ce visage</button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/app.js"></script>
+<script>lucide.createIcons();</script>
+</body>
+</html>

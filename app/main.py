@@ -10,6 +10,7 @@ from app.core.config import get_settings, validate_security
 from app.core.logging import setup_logging
 from app.api.routes import router
 from app.api.face_routes import face_router
+from app.api.stream_routes import stream_router
 from app.api.middleware import (
     GlobalRateLimitMiddleware,
     RequestLoggingMiddleware,
@@ -45,6 +46,7 @@ app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.include_router(router)
 app.include_router(face_router)
+app.include_router(stream_router)
 
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR / "static")), name="static")
 
@@ -79,6 +81,11 @@ async def results_page():
 @app.get("/graph", response_class=HTMLResponse, include_in_schema=False)
 async def graph_page():
     return (FRONTEND_DIR / "graph.html").read_text(encoding="utf-8")
+
+
+@app.get("/stream", response_class=HTMLResponse, include_in_schema=False)
+async def stream_page():
+    return (FRONTEND_DIR / "stream.html").read_text(encoding="utf-8")
 
 
 @app.exception_handler(Exception)

@@ -2,12 +2,10 @@ import io
 import hashlib
 from unittest.mock import patch
 
-import numpy as np
 import pytest
 from PIL import Image
 
 from app.facial.exceptions import (
-    ImageTooLargeError,
     InvalidImageError,
     MultipleFacesError,
     NoFaceDetectedError,

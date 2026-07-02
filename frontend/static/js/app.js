@@ -24,6 +24,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (document.getElementById("report-content")) initReport();
     if (document.getElementById("sources-container")) initResults();
     if (document.getElementById("global-graph")) initGraph();
+    if (document.getElementById("video-stage")) initStream();
 });
 
 
@@ -891,6 +892,173 @@ function onGraphClick(params) {
     } else if (meta.searchType) {
         window.location.href = "/dashboard?q=" + encodeURIComponent(meta.searchValue) + "&type=" + meta.searchType;
     }
+}
+
+
+// =====================================================
+// Page stream webcam (stream.html)
+// =====================================================
+
+let streamRunning = false;
+let streamPoll = null;
+
+function initStream() {
+    document.getElementById("logout-btn").addEventListener("click", () => API.logout());
+    const user = currentUser();
+    document.getElementById("user-info").textContent = user;
+    document.getElementById("user-avatar").textContent = user.slice(0, 2).toUpperCase();
+
+    document.getElementById("toggle-btn").addEventListener("click", toggleStream);
+    document.getElementById("register-btn").addEventListener("click", registerStreamFace);
+
+    checkCamera();
+}
+
+async function checkCamera() {
+    const toggle = document.getElementById("toggle-btn");
+    const errorEl = document.getElementById("stream-error");
+    try {
+        const info = await API.streamInfo();
+        if (info.available) {
+            toggle.disabled = false;
+            document.getElementById("placeholder-text").textContent =
+                `Webcam ${info.width}x${info.height} prête. Cliquez sur « Demarrer ».`;
+        } else {
+            toggle.disabled = true;
+            errorEl.textContent = "Aucune webcam détectée sur ce serveur.";
+            errorEl.classList.remove("hidden");
+            document.getElementById("placeholder-text").textContent = "Aucune webcam disponible.";
+        }
+    } catch (err) {
+        toggle.disabled = true;
+        errorEl.textContent = err.message;
+        errorEl.classList.remove("hidden");
+    }
+}
+
+async function toggleStream() {
+    if (streamRunning) await stopStream();
+    else await startStream();
+}
+
+async function startStream() {
+    const toggle = document.getElementById("toggle-btn");
+    const errorEl = document.getElementById("stream-error");
+    errorEl.classList.add("hidden");
+    toggle.disabled = true;
+
+    try {
+        await API.streamStart();
+        streamRunning = true;
+
+        const feed = document.getElementById("video-feed");
+        feed.src = "/api/stream/feed?ts=" + Date.now();
+        feed.classList.remove("hidden");
+        document.getElementById("video-placeholder").classList.add("hidden");
+
+        setToggle(true);
+        streamPoll = setInterval(pollStreamStatus, 1000);
+        toast("Flux démarré", "success");
+    } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.classList.remove("hidden");
+        toast(err.message, "error");
+    } finally {
+        toggle.disabled = false;
+    }
+}
+
+async function stopStream() {
+    if (streamPoll) { clearInterval(streamPoll); streamPoll = null; }
+    try {
+        await API.streamStop();
+    } catch { /* ignore */ }
+    streamRunning = false;
+
+    const feed = document.getElementById("video-feed");
+    feed.src = "";
+    feed.classList.add("hidden");
+    document.getElementById("video-placeholder").classList.remove("hidden");
+    document.getElementById("placeholder-text").textContent = "Flux arrete.";
+
+    setToggle(false);
+    resetStreamStats();
+    toast("Flux arrêté", "info");
+}
+
+function setToggle(running) {
+    const label = document.getElementById("toggle-label");
+    const btn = document.getElementById("toggle-btn");
+    const dot = document.getElementById("status-dot");
+    label.textContent = running ? "Arreter" : "Demarrer";
+    btn.innerHTML = running
+        ? '<i data-lucide="square"></i> <span id="toggle-label">Arreter</span>'
+        : '<i data-lucide="play"></i> <span id="toggle-label">Demarrer</span>';
+    btn.classList.toggle("btn-primary", !running);
+    btn.classList.toggle("btn-ghost", running);
+    document.getElementById("stat-status").textContent = running ? "En cours" : "Arrete";
+    dot.classList.toggle("on", running);
+    dot.classList.toggle("off", !running);
+    lucide.createIcons();
+}
+
+function resetStreamStats() {
+    document.getElementById("stat-fps").textContent = "—";
+    document.getElementById("stat-faces").textContent = "—";
+    document.getElementById("stat-matches").textContent = "—";
+    showIdentity("empty");
+}
+
+async function pollStreamStatus() {
+    try {
+        const st = await API.streamStatus();
+        if (!st.running) { await stopStream(); return; }
+
+        document.getElementById("stat-fps").textContent = st.fps;
+        document.getElementById("stat-faces").textContent = st.faces_detected;
+        document.getElementById("stat-matches").textContent = st.matches;
+
+        if (st.last_match) {
+            document.getElementById("match-name").textContent = st.last_match.name;
+            document.getElementById("match-score").textContent =
+                `${(st.last_match.score * 100).toFixed(0)}% de confiance`;
+            document.getElementById("match-report").href = "/report?id=" + st.last_match.person_id;
+            showIdentity("match");
+        } else if (st.faces_detected > 0) {
+            showIdentity("new");
+        } else {
+            showIdentity("empty");
+        }
+    } catch (err) {
+        toast("Perte de connexion au flux", "error");
+    }
+}
+
+function showIdentity(state) {
+    document.getElementById("identity-empty").classList.toggle("hidden", state !== "empty");
+    document.getElementById("identity-match").classList.toggle("hidden", state !== "match");
+    document.getElementById("identity-new").classList.toggle("hidden", state !== "new");
+}
+
+function registerStreamFace() {
+    const img = document.getElementById("video-feed");
+    if (!img.naturalWidth) { toast("Flux non prêt", "error"); return; }
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    canvas.getContext("2d").drawImage(img, 0, 0);
+    canvas.toBlob(async (blob) => {
+        if (!blob) return;
+        const file = new File([blob], "capture.jpg", { type: "image/jpeg" });
+        try {
+            const data = await API.uploadFace(file);
+            toast(data.is_new
+                ? "Visage enregistré — redémarrez le flux pour l'inclure dans la reconnaissance"
+                : "Visage déjà connu", "success");
+        } catch (err) {
+            toast(err.message, "error");
+        }
+    }, "image/jpeg", 0.9);
 }
 
 

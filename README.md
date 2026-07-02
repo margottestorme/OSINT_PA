@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)
-![Tests](https://img.shields.io/badge/tests-164%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-180%20passed-brightgreen)
 ![License](https://img.shields.io/badge/licence-usage%20acad%C3%A9mique-orange)
 
 Plateforme OSINT (Open Source Intelligence) académique développée dans le cadre du **projet annuel ESGI** en cybersécurité (4e année). Elle permet la recherche, l'extraction et la corrélation d'entités à partir de sources publiques et légales, la reconnaissance faciale sur images statiques, et l'enrichissement automatique croisé entre les deux modules.
@@ -211,6 +211,32 @@ Auparavant `POST /api/search` ne stockait qu'un compteur. Désormais chaque `Osi
 | `PATCH /api/persons/{id}` | Édition nom/notes d'une personne |
 
 **Design system** ([style.css](osint-platform/frontend/static/css/style.css)) : sidebar sombre `#1a1f2e` + contenu clair `#f8fafc`, accents bleu `#3b82f6` / vert `#10b981`, police **Inter**, icônes **Lucide**. Composants : cards, KPI, badges typés, onglets, modal, accordéon, toasts, dropzone, timeline, empty-states. CSP durcie avec allowlist des CDN utilisés.
+
+### Module 9 — Stream Webcam temps réel
+Détection et reconnaissance faciale en direct sur flux webcam (le CDC exige un flux vidéo temps réel, en plus de l'upload statique).
+
+**Flux MJPEG temps réel**
+Un worker de capture ([worker.py](osint-platform/app/facial/worker.py)) tourne dans un thread dédié, encode chaque frame annoté en JPEG, et l'expose via un endpoint `multipart/x-mixed-replace` consommé par une balise `<img>` côté navigateur. Le worker est un **singleton** : une seule capture à la fois, démarrée/arrêtée à la demande (jamais en permanence).
+
+**Détection HOG + reconnaissance throttlée**
+- Détection de visages **sur chaque frame** (HOG via `face_recognition`), rectangles dessinés en direct
+- **Comparaison des embeddings limitée à 1×/seconde** (pas à chaque frame) — `compare_embedding()` du Module 2
+- Annotation : nom + score de confiance si match, « Inconnu » sinon
+- FPS effectif plafonné à 30
+
+**Endpoints** (`opencv-python-headless`)
+
+| Endpoint | Rôle |
+|----------|------|
+| `GET /api/stream/info` | Caractéristiques webcam (`available, width, height, fps`) |
+| `GET /api/stream/start` | Charge les visages connus (DB) puis démarre la capture |
+| `GET /api/stream/stop` | Arrête proprement et libère la webcam |
+| `GET /api/stream/status` | Stats live : `fps, faces_detected, matches, last_match` |
+| `GET /api/stream/feed` | Flux MJPEG (sans JWT — consommé par `<img src>`) |
+
+**Page** `/stream` : zone vidéo, contrôle Start/Stop, compteurs live, dernière personne identifiée (→ rapport) ou bouton « Enregistrer » pour un nouveau visage, **avertissement RGPD** (article 9) visible.
+
+**Contraintes respectées** : aucune frame écrite sur le disque, frames supprimées de la mémoire après traitement, JWT requis partout sauf `/feed`, **dégradation propre sans webcam** (message clair, bouton désactivé, endpoints renvoient `available: false` / `503`), messages OpenCV silencés (redirection stderr).
 
 ## Prérequis
 
@@ -428,13 +454,15 @@ osint-platform/
 │   ├── test_security.py        # Tests sécurité (29 tests)
 │   ├── test_sources.py         # Tests des 10 sources OSINT (30 tests)
 │   ├── test_cli.py             # Tests du CLI (4 tests)
-│   └── test_search_results.py  # Tests persistance recherches (2 tests)
+│   ├── test_search_results.py  # Tests persistance recherches (2 tests)
+│   └── test_stream.py          # Tests stream webcam (16 tests)
 ├── frontend/
 │   ├── index.html              # Page de login
 │   ├── dashboard.html          # Dashboard principal
 │   ├── results.html            # Resultats d'une recherche
 │   ├── graph.html              # Graphe global (vis.js)
 │   ├── report.html             # Rapport par personne
+│   ├── stream.html             # Stream webcam temps reel
 │   └── static/
 │       ├── css/style.css       # Styles globaux
 │       └── js/
@@ -470,13 +498,14 @@ python -m pytest tests/test_frontend_routes.py -v # 6 tests routes frontend
 python -m pytest tests/test_security.py -v        # 25 tests sécurité
 python -m pytest tests/test_sources.py -v         # 30 tests sources OSINT
 python -m pytest tests/test_search_results.py -v  # 2 tests persistance recherches
+python -m pytest tests/test_stream.py -v          # 16 tests stream webcam
 
 # Lancer la suite sur PostgreSQL au lieu de SQLite (compatibilité)
 TEST_DATABASE_URL=postgresql+asyncpg://osint_user:<password>@localhost:5432/osint_test \
   python -m pytest tests/ -v
 ```
 
-**164 tests** couvrent :
+**180 tests** couvrent :
 - Authentification JWT (token valide, expiré, invalide, identifiants erronés)
 - Validation des inputs (injection SQL bloquée par enum Pydantic)
 - Rate limiting (429 après 10 requêtes/minute)
@@ -495,7 +524,8 @@ TEST_DATABASE_URL=postgresql+asyncpg://osint_user:<password>@localhost:5432/osin
 - RBAC (analyst 403 / admin 200 sur les endpoints sensibles)
 - Sources OSINT (10 sources : réponse OK, cas vide, 404, résilience réseau, freemium dormant/actif)
 - Persistance des recherches (`_run_search` écrit les résultats, endpoint 200/404)
-- Routes frontend (login, dashboard, results, report, graph)
+- Routes frontend (login, dashboard, results, report, graph, stream)
+- Stream webcam (détection caméra, worker start/stop, endpoints, générateur MJPEG)
 
 ## Stack technique
 

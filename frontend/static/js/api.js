@@ -131,6 +131,20 @@ const API = (() => {
         return _request("GET", "/api/sites?limit=" + limit + "&offset=" + offset);
     }
 
+    // --- Stream webcam ---
+    async function streamInfo() {
+        return _request("GET", "/api/stream/info");
+    }
+    async function streamStart() {
+        return _request("GET", "/api/stream/start");
+    }
+    async function streamStop() {
+        return _request("GET", "/api/stream/stop");
+    }
+    async function streamStatus() {
+        return _request("GET", "/api/stream/status");
+    }
+
     // --- Stats & édition ---
     async function getStats() {
         return _request("GET", "/api/stats");
@@ -158,6 +172,10 @@ const API = (() => {
         listCorrelations,
         listEmails,
         listSites,
+        streamInfo,
+        streamStart,
+        streamStop,
+        streamStatus,
         getStats,
         updatePerson,
     };
