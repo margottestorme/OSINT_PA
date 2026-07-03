@@ -19,12 +19,14 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
     }
     if (logoutBtn) logoutBtn.addEventListener("click", () => API.logout());
+    bindGlobalSearch();  // barre de recherche globale (topbar de toutes les pages)
 
     if (document.getElementById("dropzone")) initDashboard();
     if (document.getElementById("report-content")) initReport();
     if (document.getElementById("sources-container")) initResults();
     if (document.getElementById("global-graph")) initGraph();
     if (document.getElementById("video-stage")) initStream();
+    if (document.getElementById("ft-results")) initSearchPage();
 });
 
 
@@ -1069,6 +1071,176 @@ function registerStreamFace() {
 function initials(first, last) {
     return ((first && first[0] || "") + (last && last[0] || "")).toUpperCase() || "?";
 }
+
+// =====================================================
+// Recherche globale (full-text Elasticsearch)
+// =====================================================
+
+// Barre de recherche présente dans la topbar de toutes les pages :
+// Enter ou clic sur l'icône → redirection vers /search?q=...
+function bindGlobalSearch() {
+    document.querySelectorAll(".global-search").forEach((form) => {
+        form.addEventListener("submit", (e) => {
+            e.preventDefault();
+            const input = form.querySelector(".global-search-input");
+            const q = input ? input.value.trim() : "";
+            if (q) window.location.href = "/search?q=" + encodeURIComponent(q);
+        });
+    });
+}
+
+// Métadonnées d'affichage par index ES (ordre d'affichage des groupes)
+const FT_GROUPS = [
+    { index: "osint_persons",        key: "persons", emoji: "👤", label: "Personnes" },
+    { index: "osint_emails",         key: "emails",  emoji: "📧", label: "Emails" },
+    { index: "osint_sites",          key: "sites",   emoji: "🌐", label: "Sites" },
+    { index: "osint_search_results", key: "results", emoji: "🔍", label: "Recherches" },
+];
+
+function initSearchPage() {
+    const user = currentUser();
+    const info = document.getElementById("user-info");
+    if (info) info.textContent = user;
+    const avatar = document.getElementById("user-avatar");
+    if (avatar) avatar.textContent = user.slice(0, 2).toUpperCase();
+
+    const q = (new URLSearchParams(window.location.search).get("q") || "").trim();
+    const gsi = document.querySelector(".global-search-input");
+    if (gsi) gsi.value = q;
+
+    const subtitle = document.getElementById("ft-subtitle");
+    if (!q) {
+        if (subtitle) subtitle.textContent = "Saisissez une requête dans la barre de recherche.";
+        document.getElementById("ft-loading").classList.add("hidden");
+        showFtEmpty("Aucune requête", "Utilisez la barre de recherche en haut pour lancer une recherche globale.");
+        return;
+    }
+    if (subtitle) subtitle.textContent = `Résultats pour « ${q} »`;
+    runFulltext(q);
+}
+
+async function runFulltext(q) {
+    const loading = document.getElementById("ft-loading");
+    const results = document.getElementById("ft-results");
+    const empty = document.getElementById("ft-empty");
+    const unavailable = document.getElementById("ft-unavailable");
+
+    loading.classList.remove("hidden");
+    empty.classList.add("hidden");
+    unavailable.classList.add("hidden");
+    results.innerHTML = "";
+
+    let data;
+    try {
+        data = await API.fulltextSearch(q, "all", 50, 0);
+    } catch (err) {
+        loading.classList.add("hidden");
+        toast(err.message, "error");
+        showFtEmpty("Erreur", "La recherche a échoué. Réessayez.");
+        return;
+    }
+    loading.classList.add("hidden");
+
+    if (!data.hits || data.hits.length === 0) {
+        // total=0 : distinguer « aucun résultat » d'un « ES indisponible »
+        let available = true;
+        try { available = (await API.searchStatus()).available; } catch { available = true; }
+        if (!available) {
+            unavailable.classList.remove("hidden");
+            document.getElementById("ft-total").textContent = "";
+        } else {
+            showFtEmpty("Aucun résultat", `Aucune correspondance pour « ${q} ».`);
+        }
+        return;
+    }
+
+    document.getElementById("ft-total").textContent =
+        `${data.total} résultat${data.total > 1 ? "s" : ""}`;
+    renderFulltextGroups(data.hits);
+    lucide.createIcons();
+}
+
+function showFtEmpty(title, text) {
+    const empty = document.getElementById("ft-empty");
+    empty.querySelector("h3").textContent = title;
+    empty.querySelector("p").textContent = text;
+    empty.classList.remove("hidden");
+    document.getElementById("ft-total").textContent = "";
+}
+
+function renderFulltextGroups(hits) {
+    // Score en % de pertinence : normalisé sur le score max de l'ensemble des hits
+    const maxScore = hits.reduce((m, h) => Math.max(m, h.score || 0), 0) || 1;
+
+    const byIndex = {};
+    hits.forEach((h) => { (byIndex[h.index] = byIndex[h.index] || []).push(h); });
+
+    const container = document.getElementById("ft-results");
+    container.innerHTML = "";
+
+    FT_GROUPS.forEach((g) => {
+        const groupHits = byIndex[g.index];
+        if (!groupHits || !groupHits.length) return;
+
+        const section = document.createElement("div");
+        section.className = "ft-group";
+        section.innerHTML =
+            `<div class="ft-group-header">` +
+            `<span class="ft-emoji">${g.emoji}</span> ${g.label}` +
+            `<span class="ft-count">${groupHits.length}</span></div>`;
+        groupHits.forEach((h) => section.appendChild(ftItem(g, h, maxScore)));
+        container.appendChild(section);
+    });
+}
+
+function ftItem(group, hit, maxScore) {
+    const src = hit.source || {};
+    const pct = Math.max(1, Math.round((hit.score || 0) / maxScore * 100));
+
+    let title = "", sub = "", href = "#";
+    if (group.index === "osint_persons") {
+        title = `${src.first_name || ""} ${src.last_name || ""}`.trim() || "Personne";
+        sub = src.notes ? String(src.notes) : "";
+        href = "/report?id=" + encodeURIComponent(hit.id);
+    } else if (group.index === "osint_emails") {
+        title = src.email || "Email";
+        sub = "Source : " + (src.source || "—");
+        href = "/dashboard?q=" + encodeURIComponent(src.email || "") + "&type=email";
+    } else if (group.index === "osint_sites") {
+        title = src.url || "Site";
+        sub = src.server ? "Serveur : " + src.server : "";
+        href = "/dashboard?q=" + encodeURIComponent(hostOf(src.url)) + "&type=domain";
+    } else { // osint_search_results
+        title = (src.entity || "Recherche") + (src.entity_type ? ` (${src.entity_type})` : "");
+        sub = "Source : " + (src.source || "—");
+        href = "/results?id=" + encodeURIComponent(src.search_id);
+    }
+
+    const a = document.createElement("a");
+    a.className = "ft-item";
+    a.href = href;
+
+    // Fragments highlight : déjà échappés côté ES (encoder:html) → innerHTML sûr,
+    // seules les balises <mark> subsistent pour le surlignage jaune.
+    const frags = [];
+    Object.values(hit.highlight || {}).forEach((arr) => arr.forEach((f) => frags.push(f)));
+    const fragHtml = frags.length ? `<div class="ft-frag">${frags.join(" … ")}</div>` : "";
+
+    a.innerHTML =
+        `<div class="ft-ico ${group.key}">${group.emoji}</div>` +
+        `<div class="ft-body">` +
+        `<div class="ft-title">${escapeHtml(title)}</div>` +
+        (sub ? `<div class="ft-sub">${escapeHtml(sub)}</div>` : "") +
+        fragHtml +
+        `</div>` +
+        `<div class="ft-score"><div class="ft-pct">${pct}%</div><div class="ft-pct-label">pertinence</div></div>`;
+    return a;
+}
+
+function hostOf(url) {
+    try { return new URL(url).hostname; } catch { return url || ""; }
+}
+
 
 function currentUser() {
     const t = API.getToken();

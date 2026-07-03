@@ -90,6 +90,9 @@ async def upload_face(
 
     match = compare_embedding(result["embedding"], db_embeddings)
 
+    # Indexation ES de la personne (créée ou mise à jour) en tâche de fond
+    from app.search.indexer import index_person
+
     if match:
         person_id, score = match
         confidence = round(1.0 - score, 4)
@@ -107,6 +110,7 @@ async def upload_face(
         await create_audit_log(db, "face_upload", target=f"person_id={person_id},is_new=false", user_id=user_id, ip_address=ip)
         if background_tasks:
             background_tasks.add_task(_background_enrich, person_id)
+            background_tasks.add_task(index_person, person)  # confidence_score mis à jour
         return FaceUploadResponse(
             person_id=person_id,
             is_new=False,
@@ -127,6 +131,8 @@ async def upload_face(
 
     logger.info(f"[faces/upload] Nouvelle personne créée — person_id={new_person.id}")
     await create_audit_log(db, "face_upload", target=f"person_id={new_person.id},is_new=true", user_id=user_id, ip_address=ip)
+    if background_tasks:
+        background_tasks.add_task(index_person, new_person)
     return FaceUploadResponse(
         person_id=new_person.id,
         is_new=True,

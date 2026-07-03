@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -105,6 +106,27 @@ class SearchResultResponse(BaseModel):
     extracted: dict | None = None
     created_at: datetime
     model_config = {"from_attributes": True}
+
+
+# --- Recherche full-text (Elasticsearch, Module 11) ---
+class FulltextScope(str, Enum):
+    """Périmètre de la recherche full-text (paramètre `type` de l'endpoint)."""
+    persons = "persons"
+    results = "results"
+    emails = "emails"
+    sites = "sites"
+    all = "all"
+
+class FulltextHit(BaseModel):
+    index: str                                    # index ES d'origine (ex : osint_persons)
+    id: str                                       # _id du document (= PK PostgreSQL)
+    score: float | None = None                    # score de pertinence ES
+    highlight: dict[str, list[str]] = Field(default_factory=dict)  # fragments surlignés
+    source: dict[str, Any]                        # document indexé (_source)
+
+class FulltextResponse(BaseModel):
+    total: int
+    hits: list[FulltextHit]
 
 
 # --- Health ---

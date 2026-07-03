@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://osint_user:osint_pass@localhost:5432/osint_db"
     DATABASE_URL_SYNC: str = "postgresql://osint_user:osint_pass@localhost:5432/osint_db"
     REDIS_URL: str = "redis://localhost:6379/0"
+    # Module 11 : couche d'indexation full-text (optionnelle — dégradation propre si absente)
+    ELASTICSEARCH_URL: str = "http://localhost:9200"
 
     JWT_SECRET_KEY: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"

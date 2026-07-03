@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OSINT Platform — Recherche globale</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+<div class="app-shell">
+
+    <aside class="sidebar">
+        <div class="brand">
+            <span class="logo"><i data-lucide="radar"></i></span>
+            OSINT Platform
+        </div>
+        <nav>
+            <a class="nav-link" href="/dashboard"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+            <a class="nav-link" href="/dashboard#persons-section"><i data-lucide="users"></i> Personnes</a>
+            <a class="nav-link" href="/dashboard#history-section"><i data-lucide="history"></i> Historique</a>
+            <a class="nav-link" href="/graph"><i data-lucide="share-2"></i> Graphe</a>
+            <a class="nav-link" href="/stream"><i data-lucide="video"></i> Stream Webcam</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="user-chip">
+                <span class="avatar" id="user-avatar">AD</span>
+                <span id="user-info">admin</span>
+            </div>
+            <button id="logout-btn" class="btn btn-ghost btn-sm" style="width:100%; color:var(--text-on-dark); border-color:var(--border-dark);">
+                <i data-lucide="log-out"></i> Deconnexion
+            </button>
+        </div>
+    </aside>
+
+    <div class="main">
+        <div class="topbar">
+            <div>
+                <h1>Recherche globale</h1>
+                <div class="subtitle" id="ft-subtitle">Recherche full-text multi-critères (Elasticsearch)</div>
+            </div>
+            <div class="topbar-right">
+                <form class="global-search" role="search">
+                    <input type="search" class="global-search-input" placeholder="Recherche globale..."
+                           aria-label="Recherche globale" autocomplete="off">
+                    <button type="submit" class="global-search-btn" aria-label="Rechercher"><i data-lucide="search"></i></button>
+                </form>
+                <a class="btn btn-ghost btn-sm" href="/dashboard"><i data-lucide="arrow-left"></i> Dashboard</a>
+            </div>
+        </div>
+
+        <div class="content">
+            <div class="text-muted" id="ft-total" style="font-size:0.85rem; margin-bottom:16px;"></div>
+
+            <div id="ft-loading" class="loading"><span class="spinner dark"></span> Recherche en cours...</div>
+
+            <!-- ES indisponible : message distinct de « aucun résultat » -->
+            <div id="ft-unavailable" class="empty-state hidden">
+                <div class="empty-icon" style="background:#fef2f2; color:var(--danger);"><i data-lucide="database"></i></div>
+                <h3>Elasticsearch indisponible</h3>
+                <p>La recherche full-text est momentanément inaccessible. Les autres fonctionnalités de la plateforme restent opérationnelles.</p>
+            </div>
+
+            <!-- Aucun résultat -->
+            <div id="ft-empty" class="empty-state hidden">
+                <div class="empty-icon"><i data-lucide="search-x"></i></div>
+                <h3>Aucun résultat</h3>
+                <p>—</p>
+            </div>
+
+            <!-- Résultats groupés par type (rendu dynamique) -->
+            <div id="ft-results"></div>
+        </div>
+    </div>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/app.js"></script>
+<script>lucide.createIcons();</script>
+</body>
+</html>

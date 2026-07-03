@@ -40,7 +40,12 @@
                 <h1>Rapport personne</h1>
                 <div class="subtitle">Fiche detaillee et correlations</div>
             </div>
-            <div class="flex gap-8">
+            <div class="topbar-right">
+                <form class="global-search" role="search">
+                    <input type="search" class="global-search-input" placeholder="Recherche globale..."
+                           aria-label="Recherche globale" autocomplete="off">
+                    <button type="submit" class="global-search-btn" aria-label="Rechercher"><i data-lucide="search"></i></button>
+                </form>
                 <a class="btn btn-ghost btn-sm" href="/dashboard#persons-section"><i data-lucide="arrow-left"></i> Dashboard</a>
                 <button class="btn btn-primary btn-sm" id="export-btn" disabled><i data-lucide="download"></i> Exporter JSON</button>
             </div>

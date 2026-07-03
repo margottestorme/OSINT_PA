@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)
-![Tests](https://img.shields.io/badge/tests-208%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-234%20passed-brightgreen)
 ![License](https://img.shields.io/badge/licence-usage%20acad%C3%A9mique-orange)
 
 Plateforme OSINT (Open Source Intelligence) académique développée dans le cadre du **projet annuel ESGI** en cybersécurité (4e année). Elle permet la recherche, l'extraction et la corrélation d'entités à partir de sources publiques et légales, la reconnaissance faciale sur images statiques, et l'enrichissement automatique croisé entre les deux modules.
@@ -269,12 +269,57 @@ Nettoyage préalable (balises `<script>` / `<style>` / `<noscript>` retirées) v
 
 Les entités agrégées (emails, domaines, urls, noms, téléphones) alimentent l'enrichissement au même titre que les autres sources, via l'enveloppe `OsintResult` normalisée.
 
+### Module 11 — Indexation & recherche full-text (Elasticsearch)
+Couche d'indexation **optionnelle** au-dessus de PostgreSQL (qui reste la source de vérité) pour une **recherche full-text multi-critères rapide**. Elasticsearch 8.x en nœud unique. Si ES est indisponible, l'application fonctionne normalement : la **dégradation propre** est garantie de bout en bout (aucune écriture ES n'est bloquante, aucune route ne casse).
+
+**4 index à mappings stricts** (`dynamic: strict` → tout champ non déclaré est rejeté à l'indexation) :
+
+| Index | Champs indexés |
+|-------|----------------|
+| `osint_persons` | id, first_name, last_name, notes, confidence_score, created_at |
+| `osint_search_results` | search_id, source, entity, entity_type, **extracted** (nested), created_at |
+| `osint_emails` | email, source, person_id, created_at |
+| `osint_sites` | url, server, created_at |
+
+> **Zéro fuite biométrique** : l'index `osint_persons` **n'indexe jamais** l'embedding facial ni le hash d'image — uniquement des métadonnées publiques recherchables. Le mapping `strict` sert de garde-fou (un champ imprévu ferait échouer l'indexation).
+
+**Indexation automatique et non bloquante** (`BackgroundTask`, jamais dans le chemin de réponse HTTP) :
+- `POST /api/search` → indexe chaque `SearchResult` créé
+- `POST /api/faces/upload` → indexe la personne créée (et la personne matchée mise à jour)
+- `PATCH /api/persons/{id}` → réindexe la personne
+- `_id` Elasticsearch = clé primaire PostgreSQL → **upsert idempotent** (réindexer ne duplique jamais)
+
+**Recherche full-text** — `GET /api/search/fulltext` (JWT admin) :
+
+| Paramètre | Rôle |
+|-----------|------|
+| `q` | termes recherchés (**400** si vide) |
+| `type` | `persons` / `results` / `emails` / `sites` / `all` (défaut) |
+| `limit` / `offset` | pagination |
+
+Recherche multi-index fusionnée et triée par score si `type=all`, **highlight** des termes (`<mark>`, contenu échappé côté ES → rendu HTML sûr), clause **nested** sur `extracted` pour retrouver les emails/domaines/IPs découverts par scraping. Réponse : `{total, hits: [{index, id, score, highlight, source}]}`. Endpoint compagnon `GET /api/search/status` → `{available}` (l'UI distingue « 0 résultat » d'« ES indisponible »).
+
+**Barre de recherche globale** dans la topbar de **toutes les pages** (dashboard, results, report, graph, stream) : `Entrée` ou clic → page `/search`. Résultats **groupés par type** (👤 Personnes / 📧 Emails / 🌐 Sites / 🔍 Recherches), score en **% de pertinence**, termes **surlignés en jaune**, clic → page correspondante, message clair si Elasticsearch est indisponible.
+
+**Script de réindexation** — `python scripts/reindex.py` : réindexe toute la base PostgreSQL vers Elasticsearch avec une **barre de progression par type**, un **résumé coloré**, en **upsert idempotent** ; sortie en **code 1** avec message clair si ES est indisponible.
+
+**Lancement d'Elasticsearch**
+```bash
+# Démarrer Elasticsearch seul (port 9200, lié à la loopback)
+docker compose up -d elasticsearch
+
+# Indexer les données déjà présentes en base
+python scripts/reindex.py
+```
+L'URL est configurable via `ELASTICSEARCH_URL` (`.env`, défaut `http://localhost:9200`). Les index sont créés automatiquement au démarrage de l'application s'ils sont absents.
+
 ## Prérequis
 
 - Python 3.11+
 - Docker et Docker Compose (pour le déploiement complet)
 - PostgreSQL 15 (ou SQLite pour le développement local)
 - CMake + g++ (pour la compilation de dlib)
+- Elasticsearch 8.x (**optionnel** — recherche full-text ; l'app fonctionne sans)
 
 ## Installation
 
@@ -466,6 +511,10 @@ osint-platform/
 │   │   ├── engine.py           # Moteur OSINT (DuckDuckGo, WHOIS, DNS, spaCy)
 │   │   ├── rate_limiter.py     # Rate limiter pour requêtes externes (2s min)
 │   │   └── scraper.py          # Scraping léger BeautifulSoup (robots.txt, blacklist)
+│   ├── search/
+│   │   ├── elastic.py          # Client Elasticsearch + 4 index (mappings stricts)
+│   │   ├── indexer.py          # Indexation PostgreSQL → ES (index_* + bulk_reindex)
+│   │   └── fulltext.py         # Recherche full-text multi-index + highlight
 │   ├── schemas/
 │   │   └── schemas.py          # Schemas Pydantic (validation I/O)
 │   ├── cli.py                  # CLI gestion utilisateurs
@@ -488,11 +537,13 @@ osint-platform/
 │   ├── test_scraper.py         # Tests du scraping BeautifulSoup (28 tests)
 │   ├── test_cli.py             # Tests du CLI (4 tests)
 │   ├── test_search_results.py  # Tests persistance recherches (2 tests)
+│   ├── test_elastic.py         # Tests Elasticsearch — Module 11 (26 tests)
 │   └── test_stream.py          # Tests stream webcam (16 tests)
 ├── frontend/
 │   ├── index.html              # Page de login
 │   ├── dashboard.html          # Dashboard principal
 │   ├── results.html            # Resultats d'une recherche
+│   ├── search.html             # Recherche globale full-text (Module 11)
 │   ├── graph.html              # Graphe global (vis.js)
 │   ├── report.html             # Rapport par personne
 │   ├── stream.html             # Stream webcam temps reel
@@ -504,7 +555,7 @@ osint-platform/
 ├── .env.example                # Template des variables d'environnement
 ├── .gitignore
 ├── alembic.ini                 # Configuration Alembic
-├── docker-compose.yml          # PostgreSQL + Redis + App
+├── docker-compose.yml          # PostgreSQL + Redis + Elasticsearch + App
 ├── Dockerfile
 ├── requirements.txt
 └── README.md
@@ -533,13 +584,14 @@ python -m pytest tests/test_sources.py -v         # 30 tests sources OSINT
 python -m pytest tests/test_scraper.py -v         # 28 tests scraping BeautifulSoup
 python -m pytest tests/test_search_results.py -v  # 2 tests persistance recherches
 python -m pytest tests/test_stream.py -v          # 16 tests stream webcam
+python -m pytest tests/test_elastic.py -v         # 26 tests Elasticsearch (Module 11)
 
 # Lancer la suite sur PostgreSQL au lieu de SQLite (compatibilité)
 TEST_DATABASE_URL=postgresql+asyncpg://osint_user:<password>@localhost:5432/osint_test \
   python -m pytest tests/ -v
 ```
 
-**208 tests** couvrent :
+**234 tests** couvrent :
 - Authentification JWT (token valide, expiré, invalide, identifiants erronés)
 - Validation des inputs (injection SQL bloquée par enum Pydantic)
 - Rate limiting (429 après 10 requêtes/minute)
@@ -561,6 +613,7 @@ TEST_DATABASE_URL=postgresql+asyncpg://osint_user:<password>@localhost:5432/osin
 - Persistance des recherches (`_run_search` écrit les résultats, endpoint 200/404)
 - Routes frontend (login, dashboard, results, report, graph, stream)
 - Stream webcam (détection caméra, worker start/stop, endpoints, générateur MJPEG)
+- Elasticsearch (client mocké, indexation sans fuite biométrique, `extracted` filtré, bulk_reindex, recherche full-text multi-index, `/api/search/fulltext` 200/400/401/403/422, `/api/search/status`, dégradation propre ES down)
 
 ## Stack technique
 
@@ -577,6 +630,7 @@ TEST_DATABASE_URL=postgresql+asyncpg://osint_user:<password>@localhost:5432/osin
 | Auth | python-jose + passlib | JWT + hachage bcrypt |
 | Logging | loguru | Logs structurés |
 | Cache | Redis 7 | Tâches async (futur) |
+| Indexation full-text | Elasticsearch 8.x | Recherche multi-critères rapide (optionnel) |
 | Conteneurs | Docker Compose | Déploiement |
 
 ## Mentions légales et avertissements

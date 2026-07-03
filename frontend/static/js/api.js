@@ -87,6 +87,16 @@ const API = (() => {
         });
     }
 
+    // --- Recherche full-text (Elasticsearch) ---
+    async function fulltextSearch(q, type = "all", limit = 50, offset = 0) {
+        const params = new URLSearchParams({ q, type, limit, offset });
+        return _request("GET", "/api/search/fulltext?" + params.toString());
+    }
+
+    async function searchStatus() {
+        return _request("GET", "/api/search/status");
+    }
+
     // --- Facial ---
     async function uploadFace(file) {
         const formData = new FormData();
@@ -162,6 +172,8 @@ const API = (() => {
         login,
         logout,
         search,
+        fulltextSearch,
+        searchStatus,
         uploadFace,
         listFacePersons,
         listPersons,

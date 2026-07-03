@@ -11,6 +11,8 @@ from app.db.models import Correlation, Email, Person, SearchHistory, SearchResul
 from app.schemas.schemas import (
     CorrelationResponse,
     EmailResponse,
+    FulltextResponse,
+    FulltextScope,
     HealthResponse,
     LoginRequest,
     PersonReportResponse,
@@ -60,13 +62,19 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
 # --- Recherche OSINT ---
 
 async def _run_search(query: str, query_type: str) -> None:
-    """Tâche de fond : lance le moteur OSINT, enregistre l'historique ET chaque résultat."""
+    """Tâche de fond : lance le moteur OSINT, enregistre l'historique ET chaque résultat.
+
+    Indexe ensuite chaque SearchResult dans Elasticsearch (best-effort : on est déjà
+    dans une tâche de fond, donc non bloquant ; sans ES, l'indexation est un no-op).
+    """
     from app.osint.engine import correlate
     from app.db.session import async_session
+    from app.search.indexer import index_search_result
 
     try:
         results = await correlate(query, query_type)
 
+        created: list[SearchResult] = []
         async with async_session() as session:
             entry = SearchHistory(
                 query=query,
@@ -78,15 +86,21 @@ async def _run_search(query: str, query_type: str) -> None:
 
             # Persistance de chaque OsintResult (Approche B) — mapping 1:1
             for r in results:
-                session.add(SearchResult(
+                sr = SearchResult(
                     search_id=entry.id,
                     source=r.get("source", "unknown"),
                     entity=r.get("entity", query),
                     entity_type=r.get("type", query_type),
                     data=r.get("data"),
                     extracted=r.get("extracted"),
-                ))
+                )
+                session.add(sr)
+                created.append(sr)
             await session.commit()
+
+        # Indexation ES après commit (expire_on_commit=False → attributs encore disponibles)
+        for sr in created:
+            await index_search_result(sr)
 
         logger.info(f"[search] Tâche terminée pour '{query}' ({query_type}) — {len(results)} résultat(s) persistés")
     except Exception as e:
@@ -118,6 +132,39 @@ async def launch_search(
         query=body.query,
         query_type=body.query_type.value,
     )
+
+
+# --- Recherche full-text (Elasticsearch) ---
+
+@router.get("/api/search/fulltext", response_model=FulltextResponse, tags=["recherche"])
+async def fulltext_search_endpoint(
+    q: str = Query("", description="Termes recherchés (full-text)"),
+    scope: FulltextScope = Query(FulltextScope.all, alias="type"),
+    limit: int = Query(default=20, ge=1, le=50),
+    offset: int = Query(default=0, ge=0, le=500),
+    token_data: dict = Depends(require_role("admin")),
+):
+    """Recherche full-text multi-index dans Elasticsearch (JWT admin requis).
+
+    - `type` : persons / results / emails / sites / all (défaut : all)
+    - Highlight des termes trouvés, tri par pertinence, pagination limit/offset.
+    - Dégradation propre : si ES est indisponible, renvoie `{total: 0, hits: []}` (200).
+    """
+    if not q.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le paramètre 'q' ne peut pas être vide",
+        )
+    from app.search.fulltext import fulltext_search
+    return await fulltext_search(q, scope.value, limit, offset)
+
+
+@router.get("/api/search/status", tags=["recherche"])
+async def fulltext_status(token_data: dict = Depends(require_role("admin"))):
+    """Disponibilité d'Elasticsearch — permet à l'UI de distinguer « 0 résultat »
+    d'un « ES indisponible » (dégradation propre)."""
+    from app.search.elastic import elastic
+    return {"available": await elastic.is_available()}
 
 
 # --- Corrélations ---
@@ -180,6 +227,7 @@ async def list_persons(
 async def update_person(
     person_id: int,
     body: PersonUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     token_data: dict = Depends(verify_token),
 ):
@@ -192,6 +240,11 @@ async def update_person(
     for field, value in updates.items():
         setattr(person, field, value)
     await db.flush()
+
+    # Réindexation ES en tâche de fond (non bloquant ; no-op si ES indisponible)
+    from app.search.indexer import index_person
+    background_tasks.add_task(index_person, person)
+
     logger.info(f"[persons] Personne {person_id} mise à jour : {list(updates.keys())}")
     return person
 

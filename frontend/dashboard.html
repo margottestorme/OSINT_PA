@@ -42,7 +42,14 @@
                 <h1>Tableau de bord</h1>
                 <div class="subtitle">Vue d'ensemble de la plateforme OSINT</div>
             </div>
-            <button class="btn btn-ghost btn-sm" id="refresh-all"><i data-lucide="refresh-cw"></i> Rafraichir</button>
+            <div class="topbar-right">
+                <form class="global-search" role="search">
+                    <input type="search" class="global-search-input" placeholder="Recherche globale..."
+                           aria-label="Recherche globale" autocomplete="off">
+                    <button type="submit" class="global-search-btn" aria-label="Rechercher"><i data-lucide="search"></i></button>
+                </form>
+                <button class="btn btn-ghost btn-sm" id="refresh-all"><i data-lucide="refresh-cw"></i> Rafraichir</button>
+            </div>
         </div>
 
         <div class="content">

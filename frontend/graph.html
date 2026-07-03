@@ -50,6 +50,11 @@
                 <label class="filter-check"><input type="checkbox" data-filter="ips" checked> IPs</label>
             </div>
             <div class="flex gap-8" style="margin-left:auto;">
+                <form class="global-search" role="search">
+                    <input type="search" class="global-search-input" placeholder="Recherche globale..."
+                           aria-label="Recherche globale" autocomplete="off">
+                    <button type="submit" class="global-search-btn" aria-label="Rechercher"><i data-lucide="search"></i></button>
+                </form>
                 <button class="btn btn-ghost btn-sm" id="graph-fit"><i data-lucide="maximize"></i> Recentrer</button>
                 <button class="btn btn-ghost btn-sm" id="graph-refresh"><i data-lucide="refresh-cw"></i> Rafraichir</button>
             </div>

@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -8,6 +9,7 @@ from loguru import logger
 
 from app.core.config import get_settings, validate_security
 from app.core.logging import setup_logging
+from app.search.elastic import elastic
 from app.api.routes import router
 from app.api.face_routes import face_router
 from app.api.stream_routes import stream_router
@@ -23,11 +25,32 @@ validate_security(settings)
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Cycle de vie applicatif — initialise Elasticsearch (Module 11) en best-effort.
+
+    ES est OPTIONNEL : toute erreur d'initialisation est journalisée mais n'empêche
+    jamais le démarrage (dégradation propre). Les index sont créés s'ils sont absents.
+    """
+    try:
+        await elastic.connect()
+        await elastic.create_indices()
+    except Exception as e:  # garde-fou : ES ne doit jamais bloquer le démarrage
+        logger.warning(f"[startup] Initialisation Elasticsearch ignorée : {e}")
+    yield
+    try:
+        await elastic.disconnect()
+    except Exception as e:
+        logger.warning(f"[shutdown] Fermeture Elasticsearch : {e}")
+
+
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # Ordre d'exécution (externe -> interne) : SecurityHeaders, RequestLogging, CORS, GlobalRateLimit.
@@ -76,6 +99,11 @@ async def report_page():
 @app.get("/results", response_class=HTMLResponse, include_in_schema=False)
 async def results_page():
     return (FRONTEND_DIR / "results.html").read_text(encoding="utf-8")
+
+
+@app.get("/search", response_class=HTMLResponse, include_in_schema=False)
+async def search_page():
+    return (FRONTEND_DIR / "search.html").read_text(encoding="utf-8")
 
 
 @app.get("/graph", response_class=HTMLResponse, include_in_schema=False)

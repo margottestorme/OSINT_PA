@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   app:
     build: .
@@ -45,5 +43,27 @@ services:
       timeout: 5s
       retries: 5
 
+  # Couche d'indexation full-text (Module 11) — OPTIONNELLE : l'app fonctionne
+  # sans (dégradation propre). Port lié à la loopback (127.0.0.1) uniquement :
+  # accessible en dev-hôte via http://localhost:9200, jamais exposé publiquement.
+  # Les autres conteneurs y accèdent via http://elasticsearch:9200 (réseau Docker).
+  elasticsearch:
+    image: elasticsearch:8.11.0
+    container_name: osint-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false          # dev uniquement : pas de TLS ni d'auth
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "127.0.0.1:9200:9200"                 # loopback : dev-hôte OK, jamais public
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
 volumes:
   pgdata:
+  es_data:
