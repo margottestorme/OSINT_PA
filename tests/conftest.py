@@ -84,14 +84,14 @@ async def setup_db():
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter():
     """Réinitialise les rate limiters API et le rate-limiter global entre chaque test."""
-    from app.api.rate_limit import search_rate_limiter, login_rate_limiter
-    search_rate_limiter._requests.clear()
-    login_rate_limiter._requests.clear()
+    from app.api.rate_limit import search_rate_limiter, login_rate_limiter, stream_rate_limiter
+    for limiter in (search_rate_limiter, login_rate_limiter, stream_rate_limiter):
+        limiter._requests.clear()
     if global_limiter is not None:
         global_limiter._requests.clear()
     yield
-    search_rate_limiter._requests.clear()
-    login_rate_limiter._requests.clear()
+    for limiter in (search_rate_limiter, login_rate_limiter, stream_rate_limiter):
+        limiter._requests.clear()
     if global_limiter is not None:
         global_limiter._requests.clear()
 

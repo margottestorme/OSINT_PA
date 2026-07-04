@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock, AsyncMock, call
 
 import pytest
 
@@ -332,6 +332,64 @@ async def test_hunter_with_key():
     assert r["data"]["result"] == "deliverable"
     assert r["extracted"]["urls"] == ["http://x.fr/p"]
     assert r["extracted"]["domains"] == ["x.fr"]
+
+
+# =============================================================
+# Source scraping (_source_scraper) — intégration au registre (BUG 2)
+# =============================================================
+
+@pytest.mark.asyncio
+async def test_source_scraper_registered_passes_entity_type():
+    """Régression BUG 2 : le scraper est enregistré via lambda → appelable avec un seul
+    argument (entity), en transmettant le bon entity_type. Enregistré nu, il levait
+    'missing 1 required positional argument: entity_type'."""
+    with patch.object(engine, "_source_scraper", new=AsyncMock(return_value=None)) as m:
+        for etype in ("email", "domain", "name"):
+            # le scraper est la dernière source enregistrée pour chaque type
+            await engine.SOURCES[etype][-1]("cible")
+    assert m.await_args_list == [
+        call("cible", "email"), call("cible", "domain"), call("cible", "name"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_all_registered_sources_take_single_arg():
+    """Garde-fou : toute source du registre doit être appelable avec (entity,) seul."""
+    import inspect
+    for etype, sources in engine.SOURCES.items():
+        for src in sources:
+            required = [
+                p for p in inspect.signature(src).parameters.values()
+                if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) and p.default is p.empty
+            ]
+            assert len(required) == 1, f"{etype} : {src} n'accepte pas exactement 1 argument"
+
+
+@pytest.mark.asyncio
+async def test_source_scraper_domain_aggregates():
+    """domain : scrape https://<domaine> et agrège les entités des pages."""
+    scraped = [{
+        "url": "https://example.com",
+        "emails": ["a@example.com"], "domains": ["cdn.example.com"],
+        "urls": ["https://example.com/x"], "names": ["Example"], "phones": ["+33 1 23 45"],
+    }]
+    with patch.object(engine, "scrape_batch", new=AsyncMock(return_value=scraped)) as sb:
+        r = await engine._source_scraper("example.com", "domain")
+    sb.assert_awaited_once_with(["https://example.com"], max_pages=3)
+    assert r["source"] == "scraper" and r["type"] == "domain"
+    assert r["extracted"]["emails"] == ["a@example.com"]
+    assert r["extracted"]["domains"] == ["cdn.example.com"]
+    assert r["data"]["phones"] == ["+33 1 23 45"]
+
+
+@pytest.mark.asyncio
+async def test_source_scraper_email_no_urls_returns_none():
+    """email sans URL DuckDuckGo exploitable → None (scrape_batch jamais appelé)."""
+    with patch.object(engine, "_duckduckgo_search", new=AsyncMock(return_value={})), \
+         patch.object(engine, "scrape_batch", new=AsyncMock()) as sb:
+        r = await engine._source_scraper("a@b.fr", "email")
+    assert r is None
+    sb.assert_not_awaited()
 
 
 # =============================================================

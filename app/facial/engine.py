@@ -74,6 +74,36 @@ def extract_embedding(image_bytes: bytes) -> list[float]:
     return embedding
 
 
+def locate_and_encode(image_bytes: bytes) -> list[dict]:
+    """Détecte TOUS les visages d'une image et calcule leur embedding en une passe.
+
+    Conçu pour l'analyse de frames webcam (plusieurs visages possibles). Retourne
+    `[{location: {top,right,bottom,left}, embedding: [128 floats]}, ...]`.
+
+    Liste vide si aucun visage — un frame sans visage est normal (pas une exception,
+    contrairement à detect_faces). Lève InvalidImageError si les bytes sont illisibles.
+    Aucune image n'est écrite sur le disque.
+    """
+    img_array = _load_image_array(image_bytes)
+    try:
+        locations = face_recognition.face_locations(img_array)
+        if not locations:
+            return []
+        encodings = face_recognition.face_encodings(img_array, known_face_locations=locations)
+    finally:
+        del img_array
+
+    faces = [
+        {
+            "location": {"top": top, "right": right, "bottom": bottom, "left": left},
+            "embedding": enc.tolist(),
+        }
+        for (top, right, bottom, left), enc in zip(locations, encodings)
+    ]
+    logger.info(f"[locate_and_encode] {len(faces)} visage(s) localisé(s) et encodé(s)")
+    return faces
+
+
 def compare_embedding(
     embedding: list[float],
     db_embeddings: list[tuple[int, list[float]]],

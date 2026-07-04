@@ -171,7 +171,7 @@ async def fulltext_status(token_data: dict = Depends(require_role("admin"))):
 
 @router.get("/api/correlations", response_model=list[CorrelationResponse], tags=["données"])
 async def list_correlations(
-    limit: int = Query(default=20, ge=1, le=200),
+    limit: int = Query(default=20, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     token_data: dict = Depends(require_role("admin")),
@@ -184,7 +184,7 @@ async def list_correlations(
 
 @router.get("/api/emails", response_model=list[EmailResponse], tags=["données"])
 async def list_emails(
-    limit: int = Query(default=20, ge=1, le=200),
+    limit: int = Query(default=20, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     token_data: dict = Depends(require_role("admin")),
@@ -197,7 +197,7 @@ async def list_emails(
 
 @router.get("/api/sites", response_model=list[SiteResponse], tags=["données"])
 async def list_sites(
-    limit: int = Query(default=20, ge=1, le=200),
+    limit: int = Query(default=20, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     token_data: dict = Depends(require_role("admin")),
@@ -212,7 +212,7 @@ async def list_sites(
 
 @router.get("/api/persons", response_model=list[PersonResponse], tags=["données"])
 async def list_persons(
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=20, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     token_data: dict = Depends(require_role("admin")),
@@ -274,7 +274,7 @@ async def get_stats(
 
 @router.get("/api/history", response_model=list[SearchHistoryResponse], tags=["données"])
 async def list_history(
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=20, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     token_data: dict = Depends(require_role("admin")),

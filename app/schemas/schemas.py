@@ -161,6 +161,23 @@ class FacePersonResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# --- Stream webcam (analyse de frames côté client) ---
+class StreamFrameRequest(BaseModel):
+    frame: str = Field(..., description="Image JPEG encodée en base64 (data URL acceptée)")
+
+class StreamFaceResult(BaseModel):
+    location: dict[str, int]              # {top, right, bottom, left}
+    person_id: int | None = None
+    name: str | None = None
+    confidence: float | None = None
+    is_new: bool
+
+class StreamAnalyzeResponse(BaseModel):
+    faces: list[StreamFaceResult]
+    faces_count: int
+    processing_ms: float
+
+
 # --- Report ---
 class PersonReportResponse(BaseModel):
     person: PersonResponse

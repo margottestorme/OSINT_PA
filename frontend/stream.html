@@ -56,16 +56,26 @@
                 N'utilisez cette fonctionnalite qu'avec le consentement explicite des personnes filmees.</span>
             </div>
 
+            <!-- Avertissement HTTP (informatif, non bloquant) -->
+            <div id="stream-warning" class="alert hidden"
+                 style="background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; margin-bottom:20px;"
+                 role="status"></div>
+
             <div class="stream-layout">
 
-                <!-- Zone video -->
+                <!-- Zone video : flux local getUserMedia + canvas overlay superpose -->
                 <div class="video-stage" id="video-stage">
-                    <img id="video-feed" alt="Flux webcam" class="hidden">
+                    <div class="webcam-wrap hidden" id="webcam-wrap">
+                        <video id="webcam" autoplay playsinline muted></video>
+                        <canvas id="overlay"></canvas>
+                    </div>
                     <div class="video-placeholder" id="video-placeholder">
                         <i data-lucide="video-off"></i>
-                        <p id="placeholder-text">Flux arrete. Cliquez sur « Demarrer » pour lancer la capture.</p>
+                        <p id="placeholder-text">Cliquez sur « Demarrer » pour activer votre camera.</p>
                     </div>
                 </div>
+                <!-- Canvas cache : capture du frame courant avant envoi au serveur -->
+                <canvas id="capture" class="hidden"></canvas>
 
                 <!-- Panneau de controle -->
                 <div>

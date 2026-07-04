@@ -1,96 +1,121 @@
 """
-Endpoints du flux webcam temps réel — OSINT Platform.
+Endpoints du flux webcam — OSINT Platform (architecture CLIENT-SIDE).
 
-Le worker (singleton) démarre/s'arrête à la demande — il ne tourne jamais en
-permanence. Aucune frame n'est écrite sur le disque.
+La webcam est capturée CÔTÉ NAVIGATEUR (getUserMedia) : le navigateur envoie des
+frames JPEG encodés en base64 à POST /api/stream/analyze pour détection + reconnaissance.
+Le serveur ne capture rien lui-même → fonctionne depuis n'importe quel appareil, sans
+webcam serveur.
 
-JWT requis partout SAUF /feed : le flux est consommé par une balise <img src=…>
-qui ne peut pas envoyer d'en-tête Authorization. Le /feed ne diffuse que si le
-worker a été démarré au préalable par un utilisateur authentifié.
+Confidentialité : aucune frame n'est jamais stockée. Chaque frame est traité en mémoire
+puis ses bytes sont supprimés immédiatement (aucune écriture disque, aucune conservation).
 """
-import asyncio
+import base64
+import binascii
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.rate_limit import stream_rate_limiter
 from app.core.security import verify_token
 from app.db.session import get_db
 from app.db.models import Person
+from app.facial.engine import compare_embedding, locate_and_encode
+from app.facial.exceptions import InvalidImageError
 from app.facial.stream import get_camera_info
-from app.facial.worker import stream_worker
+from app.schemas.schemas import StreamAnalyzeResponse, StreamFrameRequest
 
 stream_router = APIRouter(prefix="/api/stream", tags=["stream webcam"])
+
+MAX_FRAME_SIZE = 3 * 1024 * 1024  # 3 Mo : un frame 640x480 JPEG q0.7 fait ~30-60 Ko
 
 
 @stream_router.get("/info")
 async def stream_info(token_data: dict = Depends(verify_token)) -> dict:
-    """Caractéristiques de la webcam : {available, index, width, height, fps}."""
+    """Caractéristiques de la webcam SERVEUR (informatif — la capture réelle est côté client)."""
     return get_camera_info()
 
 
-@stream_router.get("/start")
-async def stream_start(
+@stream_router.get("/status")
+async def stream_status(
     db: AsyncSession = Depends(get_db),
     token_data: dict = Depends(verify_token),
 ) -> dict:
-    """Charge les visages connus depuis la DB puis démarre la capture."""
-    result = await db.execute(
-        select(Person.id, Person.first_name, Person.last_name, Person.embedding)
-        .where(Person.embedding.is_not(None))
+    """Statut simplifié (architecture client-side) : nombre de visages connus comparables."""
+    known = await db.scalar(
+        select(func.count()).select_from(Person).where(Person.embedding.is_not(None))
     )
-    known = [(row[0], f"{row[1]} {row[2]}".strip(), row[3]) for row in result.all()]
-    stream_worker.set_known_faces(known)
-
-    started = stream_worker.start()
-    # Laisse le thread ouvrir la webcam / détecter une éventuelle absence
-    await asyncio.sleep(0.5)
-
-    st = stream_worker.status()
-    if st.get("error"):
-        stream_worker.stop()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=st["error"],
-        )
-    return {"started": started, "known_faces": len(known), "status": st}
+    return {"mode": "client-side", "known_faces": known or 0}
 
 
-@stream_router.get("/stop")
-async def stream_stop(token_data: dict = Depends(verify_token)) -> dict:
-    """Arrête proprement la capture et libère la webcam."""
-    stopped = stream_worker.stop()
-    return {"stopped": stopped, "status": stream_worker.status()}
+def _decode_frame(frame_b64: str) -> bytes:
+    """Décode le base64 (data URL acceptée) → bytes JPEG. 422 si invalide/vide/trop gros."""
+    if "," in frame_b64:  # retire un éventuel préfixe « data:image/jpeg;base64, »
+        frame_b64 = frame_b64.split(",", 1)[1]
+    try:
+        data = base64.b64decode(frame_b64, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Frame base64 invalide")
+    if not data:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Frame vide")
+    if len(data) > MAX_FRAME_SIZE:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Frame trop volumineux")
+    return data
 
 
-@stream_router.get("/status")
-async def stream_status(token_data: dict = Depends(verify_token)) -> dict:
-    """Statut + statistiques : running, fps, faces_detected, matches, last_match."""
-    return stream_worker.status()
+@stream_router.post("/analyze", response_model=StreamAnalyzeResponse)
+async def stream_analyze(
+    body: StreamFrameRequest,
+    db: AsyncSession = Depends(get_db),
+    token_data: dict = Depends(verify_token),
+) -> StreamAnalyzeResponse:
+    """Analyse un frame webcam (base64) envoyé par le navigateur : détecte les visages
+    et les compare à la base. Le frame n'est jamais stocké (bytes supprimés aussitôt).
 
+    Rate limit : 2 requêtes/seconde par utilisateur (429 au-delà).
+    """
+    username = token_data.get("sub", "unknown")
+    stream_rate_limiter.check(username)
 
-async def _mjpeg_generator():
-    """Génère un flux MJPEG (multipart) à partir des derniers frames annotés."""
-    boundary = b"--frame\r\n"
-    while stream_worker.is_running():
-        frame = stream_worker.get_frame()
-        if frame is None:
-            await asyncio.sleep(0.05)
-            continue
-        yield boundary + b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
-        await asyncio.sleep(1 / 30)  # plafonne le débit de sortie
+    t0 = time.perf_counter()
+    frame_bytes = _decode_frame(body.frame)
+    try:
+        faces = locate_and_encode(frame_bytes)  # [{location, embedding}, ...]
+    except InvalidImageError:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Frame illisible (JPEG attendu)")
+    finally:
+        del frame_bytes  # suppression immédiate des bytes — jamais stockés
 
+    # Charge les visages connus seulement s'il y a des visages à identifier
+    name_by_id: dict[int, str] = {}
+    db_embeddings: list[tuple[int, list[float]]] = []
+    if faces:
+        rows = (await db.execute(
+            select(Person.id, Person.first_name, Person.last_name, Person.embedding)
+            .where(Person.embedding.is_not(None))
+        )).all()
+        for pid, first, last, emb in rows:
+            name_by_id[pid] = f"{first} {last}".strip()
+            db_embeddings.append((pid, emb))
 
-@stream_router.get("/feed")
-async def stream_feed():
-    """Flux MJPEG (multipart/x-mixed-replace) — SANS JWT (consommé par <img src>)."""
-    if not stream_worker.is_running():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Le flux n'est pas démarré",
-        )
-    return StreamingResponse(
-        _mjpeg_generator(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-    )
+    results: list[dict] = []
+    for face in faces:
+        match = compare_embedding(face["embedding"], db_embeddings)
+        if match:
+            pid, distance = match
+            results.append({
+                "location": face["location"],
+                "person_id": pid,
+                "name": name_by_id.get(pid),
+                "confidence": round(1.0 - distance, 4),
+                "is_new": False,
+            })
+        else:
+            results.append({
+                "location": face["location"],
+                "person_id": None, "name": None, "confidence": None, "is_new": True,
+            })
+
+    processing_ms = round((time.perf_counter() - t0) * 1000, 2)
+    return StreamAnalyzeResponse(faces=results, faces_count=len(results), processing_ms=processing_ms)

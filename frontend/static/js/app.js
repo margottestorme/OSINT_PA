@@ -901,11 +901,16 @@ function onGraphClick(params) {
 // Page stream webcam (stream.html)
 // =====================================================
 
+// Architecture CLIENT-SIDE : la webcam est capturée dans le navigateur (getUserMedia).
+// Toutes les 500 ms, un frame est capturé, envoyé à POST /api/stream/analyze, et les
+// visages détectés sont dessinés sur un <canvas> superposé à la <video>.
 let streamRunning = false;
-let streamPoll = null;
+let streamInterval = null;
+let mediaStream = null;
+let analyzeInFlight = false;   // skip un frame tant que l'analyse précédente n'est pas finie
+let fpsSamples = [];           // horodatages des analyses réussies (FPS effectif sur 1 s)
 
 function initStream() {
-    document.getElementById("logout-btn").addEventListener("click", () => API.logout());
     const user = currentUser();
     document.getElementById("user-info").textContent = user;
     document.getElementById("user-avatar").textContent = user.slice(0, 2).toUpperCase();
@@ -913,86 +918,107 @@ function initStream() {
     document.getElementById("toggle-btn").addEventListener("click", toggleStream);
     document.getElementById("register-btn").addEventListener("click", registerStreamFace);
 
-    checkCamera();
+    const toggle = document.getElementById("toggle-btn");
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showStreamError("Votre navigateur ne supporte pas l'accès à la caméra (getUserMedia).");
+        toggle.disabled = true;
+        return;
+    }
+    // Avertissement HTTP non bloquant : en dev (localhost / IP privée) Chrome autorise
+    // getUserMedia en HTTP ; en production, HTTPS est requis.
+    if (location.protocol !== "https:" && !isLocalHost()) {
+        showStreamWarning("En production, HTTPS est requis pour accéder à la webcam. "
+            + "En développement local (localhost / IP privée), Chrome l'autorise en HTTP.");
+    }
+    toggle.disabled = false;
+    document.getElementById("placeholder-text").textContent =
+        "Cliquez sur « Démarrer » pour activer votre caméra.";
 }
 
-async function checkCamera() {
-    const toggle = document.getElementById("toggle-btn");
-    const errorEl = document.getElementById("stream-error");
-    try {
-        const info = await API.streamInfo();
-        if (info.available) {
-            toggle.disabled = false;
-            document.getElementById("placeholder-text").textContent =
-                `Webcam ${info.width}x${info.height} prête. Cliquez sur « Demarrer ».`;
-        } else {
-            toggle.disabled = true;
-            errorEl.textContent = "Aucune webcam détectée sur ce serveur.";
-            errorEl.classList.remove("hidden");
-            document.getElementById("placeholder-text").textContent = "Aucune webcam disponible.";
-        }
-    } catch (err) {
-        toggle.disabled = true;
-        errorEl.textContent = err.message;
-        errorEl.classList.remove("hidden");
-    }
+function isLocalHost() {
+    const h = location.hostname;
+    return h === "localhost" || h === "127.0.0.1" || h === "[::1]"
+        || /^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h);
 }
 
 async function toggleStream() {
-    if (streamRunning) await stopStream();
+    if (streamRunning) stopStream();
     else await startStream();
 }
 
 async function startStream() {
+    document.getElementById("stream-error").classList.add("hidden");
     const toggle = document.getElementById("toggle-btn");
-    const errorEl = document.getElementById("stream-error");
-    errorEl.classList.add("hidden");
     toggle.disabled = true;
 
     try {
-        await API.streamStart();
-        streamRunning = true;
-
-        const feed = document.getElementById("video-feed");
-        feed.src = "/api/stream/feed?ts=" + Date.now();
-        feed.classList.remove("hidden");
-        document.getElementById("video-placeholder").classList.add("hidden");
-
-        setToggle(true);
-        streamPoll = setInterval(pollStreamStatus, 1000);
-        toast("Flux démarré", "success");
+        mediaStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
     } catch (err) {
-        errorEl.textContent = err.message;
-        errorEl.classList.remove("hidden");
-        toast(err.message, "error");
-    } finally {
         toggle.disabled = false;
+        showCameraError(err);
+        return;
     }
+
+    const video = document.getElementById("webcam");
+    video.srcObject = mediaStream;
+    try { await video.play(); } catch { /* autoplay muet : ignore */ }
+
+    document.getElementById("webcam-wrap").classList.remove("hidden");
+    document.getElementById("video-placeholder").classList.add("hidden");
+
+    streamRunning = true;
+    fpsSamples = [];
+    analyzeInFlight = false;
+    setToggle(true);
+
+    if (video.readyState >= 1) syncCanvasSize();
+    else video.addEventListener("loadedmetadata", syncCanvasSize, { once: true });
+
+    streamInterval = setInterval(analyzeFrame, 500);
+    toggle.disabled = false;
+    toast("Caméra activée", "success");
 }
 
-async function stopStream() {
-    if (streamPoll) { clearInterval(streamPoll); streamPoll = null; }
-    try {
-        await API.streamStop();
-    } catch { /* ignore */ }
-    streamRunning = false;
+function showCameraError(err) {
+    const name = err && err.name;
+    let msg;
+    if (name === "NotAllowedError" || name === "SecurityError" || name === "PermissionDeniedError") {
+        msg = "Accès refusé. Autorisez l'accès à la caméra dans votre navigateur.";
+    } else if (name === "NotFoundError" || name === "DevicesNotFoundError" || name === "OverconstrainedError") {
+        msg = "Aucune caméra détectée sur cet appareil.";
+    } else if (name === "NotReadableError") {
+        msg = "La caméra est déjà utilisée par une autre application.";
+    } else {
+        msg = "Impossible d'accéder à la caméra : " + ((err && err.message) || "erreur inconnue");
+    }
+    showStreamError(msg);
+    toast(msg, "error");
+}
 
-    const feed = document.getElementById("video-feed");
-    feed.src = "";
-    feed.classList.add("hidden");
+function stopStream() {
+    if (streamInterval) { clearInterval(streamInterval); streamInterval = null; }
+    if (mediaStream) {
+        mediaStream.getTracks().forEach((t) => t.stop());  // libère la caméra
+        mediaStream = null;
+    }
+    streamRunning = false;
+    analyzeInFlight = false;
+
+    const video = document.getElementById("webcam");
+    video.srcObject = null;
+    clearOverlay();
+    document.getElementById("webcam-wrap").classList.add("hidden");
     document.getElementById("video-placeholder").classList.remove("hidden");
-    document.getElementById("placeholder-text").textContent = "Flux arrete.";
+    document.getElementById("placeholder-text").textContent = "Caméra arrêtée. Cliquez sur « Démarrer ».";
 
     setToggle(false);
     resetStreamStats();
-    toast("Flux arrêté", "info");
+    toast("Caméra arrêtée", "info");
 }
 
 function setToggle(running) {
-    const label = document.getElementById("toggle-label");
     const btn = document.getElementById("toggle-btn");
     const dot = document.getElementById("status-dot");
-    label.textContent = running ? "Arreter" : "Demarrer";
     btn.innerHTML = running
         ? '<i data-lucide="square"></i> <span id="toggle-label">Arreter</span>'
         : '<i data-lucide="play"></i> <span id="toggle-label">Demarrer</span>';
@@ -1011,28 +1037,97 @@ function resetStreamStats() {
     showIdentity("empty");
 }
 
-async function pollStreamStatus() {
+function syncCanvasSize() {
+    // Le canvas overlay utilise le référentiel natif de la vidéo (coords des visages) ;
+    // le CSS l'étire à la taille affichée, identique à la vidéo → rectangles alignés.
+    const video = document.getElementById("webcam");
+    const overlay = document.getElementById("overlay");
+    overlay.width = video.videoWidth || 640;
+    overlay.height = video.videoHeight || 480;
+}
+
+async function analyzeFrame() {
+    // Skip si l'analyse précédente n'est pas terminée → évite l'accumulation (serveur lent)
+    if (!streamRunning || analyzeInFlight) return;
+    const video = document.getElementById("webcam");
+    if (!video.videoWidth) return;
+
+    const cap = document.getElementById("capture");
+    cap.width = video.videoWidth;
+    cap.height = video.videoHeight;
+    cap.getContext("2d").drawImage(video, 0, 0, cap.width, cap.height);
+    const frame = cap.toDataURL("image/jpeg", 0.7);
+
+    analyzeInFlight = true;
     try {
-        const st = await API.streamStatus();
-        if (!st.running) { await stopStream(); return; }
-
-        document.getElementById("stat-fps").textContent = st.fps;
-        document.getElementById("stat-faces").textContent = st.faces_detected;
-        document.getElementById("stat-matches").textContent = st.matches;
-
-        if (st.last_match) {
-            document.getElementById("match-name").textContent = st.last_match.name;
-            document.getElementById("match-score").textContent =
-                `${(st.last_match.score * 100).toFixed(0)}% de confiance`;
-            document.getElementById("match-report").href = "/report?id=" + st.last_match.person_id;
-            showIdentity("match");
-        } else if (st.faces_detected > 0) {
-            showIdentity("new");
-        } else {
-            showIdentity("empty");
-        }
+        const data = await API.streamAnalyze(frame);
+        if (!streamRunning) return;  // arrêté pendant la requête
+        drawFaces(data.faces);
+        updateStreamStats(data);
     } catch (err) {
-        toast("Perte de connexion au flux", "error");
+        // Frame ignoré (429 rate limit, erreur ponctuelle) — pas de spam de toasts
+        console.warn("[stream] frame ignoré :", err.message);
+    } finally {
+        analyzeInFlight = false;
+    }
+}
+
+function drawFaces(faces) {
+    const overlay = document.getElementById("overlay");
+    const ctx = overlay.getContext("2d");
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+    faces.forEach((face) => {
+        const { top, right, bottom, left } = face.location;
+        const known = !face.is_new;
+        const color = known ? "#10b981" : "#ef4444";  // vert = connu / rouge = inconnu
+        const label = known
+            ? `${face.name || "?"} · ${Math.round((face.confidence || 0) * 100)}%`
+            : "Inconnu";
+
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = color;
+        ctx.strokeRect(left, top, right - left, bottom - top);
+
+        // Badge (nom/score) au-dessus du rectangle (ou juste sous le bord haut si pas de place)
+        ctx.font = "600 16px Inter, system-ui, sans-serif";
+        const padX = 7, badgeH = 24;
+        const w = ctx.measureText(label).width + padX * 2;
+        const y = top - badgeH >= 0 ? top - badgeH : top;
+        ctx.fillStyle = color;
+        ctx.fillRect(left, y, w, badgeH);
+        ctx.fillStyle = "#ffffff";
+        ctx.textBaseline = "middle";
+        ctx.fillText(label, left + padX, y + badgeH / 2 + 1);
+    });
+}
+
+function clearOverlay() {
+    const overlay = document.getElementById("overlay");
+    overlay.getContext("2d").clearRect(0, 0, overlay.width, overlay.height);
+}
+
+function updateStreamStats(data) {
+    const now = performance.now();
+    fpsSamples.push(now);
+    fpsSamples = fpsSamples.filter((t) => now - t < 1000);
+    document.getElementById("stat-fps").textContent = fpsSamples.length;
+    document.getElementById("stat-faces").textContent = data.faces_count;
+
+    const known = data.faces.filter((f) => !f.is_new);
+    document.getElementById("stat-matches").textContent = known.length;
+
+    if (known.length) {
+        const m = known[0];
+        document.getElementById("match-name").textContent = m.name;
+        document.getElementById("match-score").textContent =
+            `${Math.round((m.confidence || 0) * 100)}% de confiance`;
+        document.getElementById("match-report").href = "/report?id=" + m.person_id;
+        showIdentity("match");
+    } else if (data.faces_count > 0) {
+        showIdentity("new");
+    } else {
+        showIdentity("empty");
     }
 }
 
@@ -1043,24 +1138,37 @@ function showIdentity(state) {
 }
 
 function registerStreamFace() {
-    const img = document.getElementById("video-feed");
-    if (!img.naturalWidth) { toast("Flux non prêt", "error"); return; }
+    const video = document.getElementById("webcam");
+    if (!video.videoWidth) { toast("Caméra non prête", "error"); return; }
     const canvas = document.createElement("canvas");
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
-    canvas.getContext("2d").drawImage(img, 0, 0);
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0);
     canvas.toBlob(async (blob) => {
         if (!blob) return;
         const file = new File([blob], "capture.jpg", { type: "image/jpeg" });
         try {
             const data = await API.uploadFace(file);
             toast(data.is_new
-                ? "Visage enregistré — redémarrez le flux pour l'inclure dans la reconnaissance"
+                ? "Visage enregistré — il sera reconnu dès les prochains frames"
                 : "Visage déjà connu", "success");
         } catch (err) {
             toast(err.message, "error");
         }
     }, "image/jpeg", 0.9);
+}
+
+function showStreamError(msg) {
+    const el = document.getElementById("stream-error");
+    el.textContent = msg;
+    el.classList.remove("hidden");
+}
+
+function showStreamWarning(msg) {
+    const el = document.getElementById("stream-warning");
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.remove("hidden");
 }
 
 

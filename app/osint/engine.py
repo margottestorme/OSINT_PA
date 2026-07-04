@@ -828,7 +828,9 @@ async def _source_scraper(entity: str, entity_type: str) -> OsintResult | None:
         return None
 
 
-# Enregistrement du scraper sur les 3 types
-SOURCES["email"].append(_source_scraper)
-SOURCES["domain"].append(_source_scraper)
-SOURCES["name"].append(_source_scraper)
+# Enregistrement du scraper sur les 3 types. Le registre appelle chaque source avec
+# un seul argument (entity) ; _source_scraper prend (entity, entity_type) → on passe
+# l'entity_type via une lambda (sinon TypeError : missing argument 'entity_type').
+SOURCES["email"].append(lambda e: _source_scraper(e, "email"))
+SOURCES["domain"].append(lambda e: _source_scraper(e, "domain"))
+SOURCES["name"].append(lambda e: _source_scraper(e, "name"))

@@ -58,3 +58,10 @@ login_rate_limiter = APIRateLimiter(
     window_seconds=60,
     detail="Trop de tentatives, réessayez dans une minute",
 )
+
+# Analyse de frames webcam (refonte client-side) : 2 requêtes/seconde par utilisateur.
+stream_rate_limiter = APIRateLimiter(
+    max_requests=2,
+    window_seconds=1,
+    detail="Trop de frames — l'analyse est limitée à 2 par seconde",
+)

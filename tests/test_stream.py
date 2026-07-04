@@ -1,4 +1,4 @@
-import time
+import base64
 from unittest.mock import patch, MagicMock
 
 import cv2
@@ -6,14 +6,12 @@ import numpy as np
 import pytest
 
 from app.facial import stream as stream_mod
-from app.facial.worker import StreamWorker, stream_worker
+from app.facial import engine as facial_engine
+from app.db.models import Person
 
-
-@pytest.fixture(autouse=True)
-def _cleanup_worker():
-    """Garantit que le worker singleton est arrêté après chaque test."""
-    yield
-    stream_worker.stop()
+# base64 valide quelconque : le décodage réussit ; locate_and_encode est mocké dans
+# les tests d'endpoint, donc le contenu réel des bytes n'a pas d'importance.
+_VALID_B64 = base64.b64encode(b"fake-jpeg-bytes").decode()
 
 
 def _fake_cap(opened=True, w=1280, h=720, fps=30.0):
@@ -27,8 +25,18 @@ def _fake_cap(opened=True, w=1280, h=720, fps=30.0):
     return cap
 
 
+async def _add_person(embedding, first="Jean", last="Dupont") -> int:
+    """Insère une personne (avec embedding) dans la base de test et renvoie son id."""
+    from tests.conftest import session_test
+    async with session_test() as s:
+        p = Person(first_name=first, last_name=last, embedding=embedding, confidence_score=1.0)
+        s.add(p)
+        await s.commit()
+        return p.id
+
+
 # =============================================================
-# detect_camera / get_camera_info (cv2 mocké)
+# detect_camera / get_camera_info (cv2 mocké) — serveur, /info conservé
 # =============================================================
 
 def test_detect_camera_available():
@@ -55,54 +63,29 @@ def test_get_camera_info_unavailable():
 
 
 # =============================================================
-# StreamWorker (cv2 + face_recognition mockés)
+# locate_and_encode (face_recognition + _load_image_array mockés)
 # =============================================================
 
-class _FakeCap:
-    def isOpened(self):
-        return True
-
-    def read(self):
-        return True, np.zeros((120, 160, 3), dtype=np.uint8)
-
-    def release(self):
-        pass
-
-
-def test_worker_start_stop_status():
-    with patch("app.facial.worker.cv2.VideoCapture", return_value=_FakeCap()), \
-         patch("app.facial.worker.face_recognition.face_locations", return_value=[]):
-        w = StreamWorker(max_fps=10)
-        assert w.is_running() is False
-        assert w.start() is True
-        time.sleep(0.4)
-
-        assert w.is_running() is True
-        st = w.status()
-        assert st["running"] is True
-        assert st["error"] is None
-        assert w.get_frame() is not None  # JPEG produit
-
-        assert w.start() is False  # déjà démarré
-        assert w.stop() is True
-        assert w.is_running() is False
-        assert w.get_frame() is None  # frame libérée
-        assert w.stop() is False  # déjà arrêté
+def test_locate_and_encode_multi():
+    arr = np.zeros((10, 10, 3), dtype=np.uint8)
+    with patch.object(facial_engine, "_load_image_array", return_value=arr), \
+         patch("app.facial.engine.face_recognition.face_locations", return_value=[(10, 20, 30, 40)]), \
+         patch("app.facial.engine.face_recognition.face_encodings", return_value=[np.array([0.2] * 128)]):
+        faces = facial_engine.locate_and_encode(b"whatever")
+    assert len(faces) == 1
+    assert faces[0]["location"] == {"top": 10, "right": 20, "bottom": 30, "left": 40}
+    assert faces[0]["embedding"] == [0.2] * 128
 
 
-def test_worker_no_webcam():
-    cap = MagicMock()
-    cap.isOpened.return_value = False
-    with patch("app.facial.worker.cv2.VideoCapture", return_value=cap):
-        w = StreamWorker()
-        w.start()
-        time.sleep(0.3)
-        assert w.is_running() is False
-        assert w.status()["error"] == "Webcam indisponible"
+def test_locate_and_encode_no_face():
+    arr = np.zeros((5, 5, 3), dtype=np.uint8)
+    with patch.object(facial_engine, "_load_image_array", return_value=arr), \
+         patch("app.facial.engine.face_recognition.face_locations", return_value=[]):
+        assert facial_engine.locate_and_encode(b"x") == []
 
 
 # =============================================================
-# Endpoints /api/stream/*
+# GET /api/stream/info
 # =============================================================
 
 @pytest.mark.asyncio
@@ -117,31 +100,9 @@ async def test_stream_info_ok(client, auth_headers):
     assert "available" in resp.json()
 
 
-@pytest.mark.asyncio
-async def test_stream_start_requires_jwt(client):
-    assert (await client.get("/api/stream/start")).status_code in (401, 403)
-
-
-@pytest.mark.asyncio
-async def test_stream_start_no_webcam(client, auth_headers):
-    with patch("app.facial.worker.cv2.VideoCapture") as mock_cap:
-        mock_cap.return_value.isOpened.return_value = False
-        resp = await client.get("/api/stream/start", headers=auth_headers)
-    assert resp.status_code == 503
-    assert "webcam" in resp.json()["detail"].lower()
-
-
-@pytest.mark.asyncio
-async def test_stream_stop_requires_jwt(client):
-    assert (await client.get("/api/stream/stop")).status_code in (401, 403)
-
-
-@pytest.mark.asyncio
-async def test_stream_stop_ok(client, auth_headers):
-    resp = await client.get("/api/stream/stop", headers=auth_headers)
-    assert resp.status_code == 200
-    assert "stopped" in resp.json()
-
+# =============================================================
+# GET /api/stream/status (simplifié, sans worker)
+# =============================================================
 
 @pytest.mark.asyncio
 async def test_stream_status_requires_jwt(client):
@@ -152,31 +113,74 @@ async def test_stream_status_requires_jwt(client):
 async def test_stream_status_ok(client, auth_headers):
     resp = await client.get("/api/stream/status", headers=auth_headers)
     assert resp.status_code == 200
-    assert "running" in resp.json()
-
-
-@pytest.mark.asyncio
-async def test_stream_feed_not_started(client):
-    stream_worker.stop()
-    resp = await client.get("/api/stream/feed")
-    assert resp.status_code == 409
+    body = resp.json()
+    assert body["mode"] == "client-side"
+    assert "known_faces" in body
 
 
 # =============================================================
-# Générateur MJPEG — format multipart d'un chunk
+# POST /api/stream/analyze (analyse d'un frame côté client)
 # =============================================================
 
 @pytest.mark.asyncio
-async def test_mjpeg_generator_format():
-    from app.api.stream_routes import _mjpeg_generator
+async def test_analyze_requires_jwt(client):
+    resp = await client.post("/api/stream/analyze", json={"frame": _VALID_B64})
+    assert resp.status_code in (401, 403)
 
-    fake = b"\xff\xd8FAKEJPEG\xff\xd9"
-    with patch.object(stream_worker, "is_running", return_value=True), \
-         patch.object(stream_worker, "get_frame", return_value=fake):
-        gen = _mjpeg_generator()
-        chunk = await gen.__anext__()
-        await gen.aclose()
 
-    assert b"--frame" in chunk
-    assert b"Content-Type: image/jpeg" in chunk
-    assert fake in chunk
+@pytest.mark.asyncio
+async def test_analyze_corrupt_base64(client, auth_headers):
+    resp = await client.post("/api/stream/analyze", json={"frame": "!!!not-base64!!!"}, headers=auth_headers)
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_analyze_no_face(client, auth_headers):
+    with patch("app.api.stream_routes.locate_and_encode", return_value=[]):
+        resp = await client.post("/api/stream/analyze", json={"frame": _VALID_B64}, headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["faces"] == [] and data["faces_count"] == 0
+    assert isinstance(data["processing_ms"], (int, float))
+
+
+@pytest.mark.asyncio
+async def test_analyze_new_face(client, auth_headers):
+    """Visage détecté mais aucun match en base → is_new=True."""
+    faces = [{"location": {"top": 1, "right": 2, "bottom": 3, "left": 4}, "embedding": [0.5] * 128}]
+    with patch("app.api.stream_routes.locate_and_encode", return_value=faces):
+        resp = await client.post("/api/stream/analyze", json={"frame": _VALID_B64}, headers=auth_headers)
+    assert resp.status_code == 200
+    f = resp.json()["faces"][0]
+    assert f["person_id"] is None and f["name"] is None
+    assert f["confidence"] is None and f["is_new"] is True
+    assert f["location"] == {"top": 1, "right": 2, "bottom": 3, "left": 4}
+
+
+@pytest.mark.asyncio
+async def test_analyze_match(client, auth_headers):
+    """Visage correspondant à une personne connue → person_id/name/confidence renseignés."""
+    emb = [0.1] * 128
+    pid = await _add_person(emb, "Jean", "Dupont")
+    faces = [{"location": {"top": 10, "right": 50, "bottom": 60, "left": 20}, "embedding": emb}]
+    with patch("app.api.stream_routes.locate_and_encode", return_value=faces):
+        resp = await client.post("/api/stream/analyze", json={"frame": _VALID_B64}, headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["faces_count"] == 1
+    f = data["faces"][0]
+    assert f["person_id"] == pid
+    assert f["name"] == "Jean Dupont"
+    assert f["is_new"] is False
+    assert f["confidence"] == 1.0  # distance nulle → confiance 1.0
+
+
+@pytest.mark.asyncio
+async def test_analyze_rate_limit(client, auth_headers):
+    """Au-delà de 2 requêtes/seconde par utilisateur → 429."""
+    with patch("app.api.stream_routes.locate_and_encode", return_value=[]):
+        r1 = await client.post("/api/stream/analyze", json={"frame": _VALID_B64}, headers=auth_headers)
+        r2 = await client.post("/api/stream/analyze", json={"frame": _VALID_B64}, headers=auth_headers)
+        r3 = await client.post("/api/stream/analyze", json={"frame": _VALID_B64}, headers=auth_headers)
+    assert r1.status_code == 200 and r2.status_code == 200
+    assert r3.status_code == 429

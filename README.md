@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)
-![Tests](https://img.shields.io/badge/tests-234%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-238%20passed-brightgreen)
 ![License](https://img.shields.io/badge/licence-usage%20acad%C3%A9mique-orange)
 
 Plateforme OSINT (Open Source Intelligence) académique développée dans le cadre du **projet annuel ESGI** en cybersécurité (4e année). Elle permet la recherche, l'extraction et la corrélation d'entités à partir de sources publiques et légales, la reconnaissance faciale sur images statiques, et l'enrichissement automatique croisé entre les deux modules.
@@ -212,31 +212,43 @@ Auparavant `POST /api/search` ne stockait qu'un compteur. Désormais chaque `Osi
 
 **Design system** ([style.css](osint-platform/frontend/static/css/style.css)) : sidebar sombre `#1a1f2e` + contenu clair `#f8fafc`, accents bleu `#3b82f6` / vert `#10b981`, police **Inter**, icônes **Lucide**. Composants : cards, KPI, badges typés, onglets, modal, accordéon, toasts, dropzone, timeline, empty-states. CSP durcie avec allowlist des CDN utilisés.
 
-### Module 9 — Stream Webcam temps réel
-Détection et reconnaissance faciale en direct sur flux webcam (le CDC exige un flux vidéo temps réel, en plus de l'upload statique).
+### Module 9 — Stream Webcam temps réel (architecture côté client)
+Détection et reconnaissance faciale en direct (le CDC exige un flux vidéo temps réel, en plus de l'upload statique). La webcam est capturée **dans le navigateur** (`getUserMedia`) : le serveur ne capture rien lui-même → la fonctionnalité marche depuis **n'importe quel appareil**, sans webcam serveur.
 
-**Flux MJPEG temps réel**
-Un worker de capture ([worker.py](osint-platform/app/facial/worker.py)) tourne dans un thread dédié, encode chaque frame annoté en JPEG, et l'expose via un endpoint `multipart/x-mixed-replace` consommé par une balise `<img>` côté navigateur. Le worker est un **singleton** : une seule capture à la fois, démarrée/arrêtée à la demande (jamais en permanence).
+**Capture côté client + analyse serveur**
+- Le navigateur ouvre la caméra via `navigator.mediaDevices.getUserMedia({video:{width:640,height:480}})` et l'affiche dans une balise `<video>`.
+- Toutes les **500 ms**, un frame est capturé sur un `<canvas>` caché, encodé en **JPEG base64** (`toDataURL('image/jpeg', 0.7)`) et envoyé à `POST /api/stream/analyze`.
+- Les visages détectés sont dessinés sur un `<canvas id="overlay">` **superposé** à la vidéo (position absolute) : rectangle **vert + nom · score** si personne connue, **rouge + « Inconnu »** sinon.
+- Stats temps réel : FPS effectif, visages détectés, correspondances. Un frame est **skippé** si l'analyse précédente n'est pas terminée (évite l'accumulation quand le serveur est lent).
 
-**Détection HOG + reconnaissance throttlée**
-- Détection de visages **sur chaque frame** (HOG via `face_recognition`), rectangles dessinés en direct
-- **Comparaison des embeddings limitée à 1×/seconde** (pas à chaque frame) — `compare_embedding()` du Module 2
-- Annotation : nom + score de confiance si match, « Inconnu » sinon
-- FPS effectif plafonné à 30
+**Endpoint d'analyse** — `POST /api/stream/analyze` (JWT, **2 requêtes/seconde** par utilisateur)
+```json
+// Requête : {"frame": "<base64 JPEG>"}
+// Réponse :
+{
+  "faces": [
+    {"location": {"top":…, "right":…, "bottom":…, "left":…},
+     "person_id": 1, "name": "Jean Dupont", "confidence": 0.82, "is_new": false}
+  ],
+  "faces_count": 1,
+  "processing_ms": 48.3
+}
+```
+Le serveur décode le frame, détecte tous les visages (`locate_and_encode` → localisation + embedding en une passe), les compare à la base (`compare_embedding`), puis **supprime immédiatement les bytes** (aucune écriture disque, aucune conservation).
 
-**Endpoints** (`opencv-python-headless`)
+**Endpoints**
 
 | Endpoint | Rôle |
 |----------|------|
-| `GET /api/stream/info` | Caractéristiques webcam (`available, width, height, fps`) |
-| `GET /api/stream/start` | Charge les visages connus (DB) puis démarre la capture |
-| `GET /api/stream/stop` | Arrête proprement et libère la webcam |
-| `GET /api/stream/status` | Stats live : `fps, faces_detected, matches, last_match` |
-| `GET /api/stream/feed` | Flux MJPEG (sans JWT — consommé par `<img src>`) |
+| `POST /api/stream/analyze` | Analyse un frame (base64) → visages localisés + identifiés |
+| `GET /api/stream/info` | Caractéristiques webcam serveur (informatif) |
+| `GET /api/stream/status` | Statut simplifié : `{mode: "client-side", known_faces}` |
 
-**Page** `/stream` : zone vidéo, contrôle Start/Stop, compteurs live, dernière personne identifiée (→ rapport) ou bouton « Enregistrer » pour un nouveau visage, **avertissement RGPD** (article 9) visible.
+**Page** `/stream` : `<video>` + overlay canvas, contrôle Démarrer/Arrêter, compteurs live, dernière personne identifiée (→ rapport) ou bouton « Enregistrer » pour un nouveau visage, **avertissement RGPD** (article 9).
 
-**Contraintes respectées** : aucune frame écrite sur le disque, frames supprimées de la mémoire après traitement, JWT requis partout sauf `/feed`, **dégradation propre sans webcam** (message clair, bouton désactivé, endpoints renvoient `available: false` / `503`), messages OpenCV silencés (redirection stderr).
+**Gestion des erreurs (côté navigateur)** : permission refusée, absence de caméra, caméra occupée → messages clairs ; en **HTTP hors localhost**, avertissement informatif non bloquant (`getUserMedia` fonctionne en HTTP sur `localhost`/IP privée dans Chrome, HTTPS requis en production).
+
+**Contraintes respectées** : aucune frame écrite sur le disque, bytes supprimés immédiatement après analyse, JWT requis, rate limiting 2/s, aucune donnée biométrique exposée.
 
 ### Module 10 — Scraping BeautifulSoup
 Enrichissement OSINT par **contenu de page web** : le moteur récupère et analyse le HTML des pages liées à une entité pour en extraire de nouvelles données. Scraping **léger et respectueux** (sources publiques uniquement, jamais de scraping agressif), branché sur le registre `SOURCES` comme les autres sources.
@@ -312,6 +324,10 @@ docker compose up -d elasticsearch
 python scripts/reindex.py
 ```
 L'URL est configurable via `ELASTICSEARCH_URL` (`.env`, défaut `http://localhost:9200`). Les index sont créés automatiquement au démarrage de l'application s'ils sont absents.
+
+### Corrections récentes (suite aux tests manuels)
+- **Graphe global vide (422)** : la borne `limit` max des endpoints de liste (`persons`, `correlations`, `emails`, `sites`, `history`) est passée à **500** — le graphe charge `limit=200` et recevait un `422` (persons était plafonné à 100), ce qui vidait le graphe.
+- **Source scraper cassée** : `_source_scraper(entity, entity_type)` est désormais enregistrée dans le registre `SOURCES` via des **lambdas** passant l'`entity_type` (`lambda e: _source_scraper(e, "domain")`…), corrigeant `missing 1 required positional argument: 'entity_type'` à chaque recherche.
 
 ## Prérequis
 
@@ -612,7 +628,7 @@ TEST_DATABASE_URL=postgresql+asyncpg://osint_user:<password>@localhost:5432/osin
 - Scraping BeautifulSoup (blacklist réseaux sociaux, robots.txt, taille max, extraction d'entités, lot 3 pages, rate limiting)
 - Persistance des recherches (`_run_search` écrit les résultats, endpoint 200/404)
 - Routes frontend (login, dashboard, results, report, graph, stream)
-- Stream webcam (détection caméra, worker start/stop, endpoints, générateur MJPEG)
+- Stream webcam client-side (caméra serveur, `/info`, `/status`, `locate_and_encode` multi-visages, `POST /analyze` : match / nouveau visage / aucun visage / base64 corrompu 422 / sans JWT 401 / rate limit 429)
 - Elasticsearch (client mocké, indexation sans fuite biométrique, `extracted` filtré, bulk_reindex, recherche full-text multi-index, `/api/search/fulltext` 200/400/401/403/422, `/api/search/status`, dégradation propre ES down)
 
 ## Stack technique
