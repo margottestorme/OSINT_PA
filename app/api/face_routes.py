@@ -143,7 +143,7 @@ async def upload_face(
 
 @face_router.get("/persons", response_model=list[FacePersonResponse])
 async def list_face_persons(
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=20, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     token_data: dict = Depends(require_role("admin")),

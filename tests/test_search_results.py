@@ -98,3 +98,35 @@ async def test_get_search_results_endpoint(client, auth_headers):
     resp404 = await client.get("/api/history/99999/results", headers=auth_headers)
     assert resp404.status_code == 404
     assert "introuvable" in resp404.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_get_search_results_with_list_data(client, auth_headers):
+    """Régression audit : les sources github/wikipedia stockent `data` en LISTE.
+    L'endpoint doit renvoyer 200 (avant : 500 ResponseValidationError car data était dict|None)."""
+    from tests.conftest import session_test
+
+    async with session_test() as db:
+        sh = SearchHistory(query="Linus Torvalds", query_type="name", result_count=2)
+        db.add(sh)
+        await db.flush()
+        db.add(SearchResult(
+            search_id=sh.id, source="github", entity="Linus Torvalds", entity_type="name",
+            data=[{"login": "torvalds", "id": 1024025}],   # LISTE (réponse GitHub)
+            extracted={"names": ["torvalds"], "urls": ["https://github.com/torvalds"]},
+        ))
+        db.add(SearchResult(
+            search_id=sh.id, source="wikipedia", entity="Linus Torvalds", entity_type="name",
+            data=[{"title": "Linus Torvalds"}],            # LISTE (réponse Wikipedia)
+            extracted={"names": ["Linus Torvalds"]},
+        ))
+        await db.commit()
+        sid = sh.id
+
+    resp = await client.get(f"/api/history/{sid}/results", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 2
+    gh = next(r for r in data if r["source"] == "github")
+    assert isinstance(gh["data"], list)                    # la liste est préservée
+    assert gh["data"][0]["login"] == "torvalds"

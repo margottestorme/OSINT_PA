@@ -102,7 +102,7 @@ class SearchResultResponse(BaseModel):
     source: str
     entity: str
     entity_type: str
-    data: dict | None = None
+    data: dict | list | None = None  # certaines sources (github, wikipedia) renvoient une liste
     extracted: dict | None = None
     created_at: datetime
     model_config = {"from_attributes": True}
