@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)
-![Tests](https://img.shields.io/badge/tests-238%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-243%20passed%20%2B8%20PG-brightgreen)
 ![License](https://img.shields.io/badge/licence-usage%20acad%C3%A9mique-orange)
 
 Plateforme OSINT (Open Source Intelligence) académique développée dans le cadre du **projet annuel ESGI** en cybersécurité (4e année). Elle permet la recherche, l'extraction et la corrélation d'entités à partir de sources publiques et légales, la reconnaissance faciale sur images statiques, et l'enrichissement automatique croisé entre les deux modules.
@@ -325,6 +325,48 @@ python scripts/reindex.py
 ```
 L'URL est configurable via `ELASTICSEARCH_URL` (`.env`, défaut `http://localhost:9200`). Les index sont créés automatiquement au démarrage de l'application s'ils sont absents.
 
+### Module 12 — Chiffrement des données au repos (pgcrypto)
+Le CDC exige un **chiffrement au repos** des données sensibles. Deux colonnes sont chiffrées via l'extension PostgreSQL **pgcrypto** (`pgp_sym_encrypt`/`pgp_sym_decrypt`, chiffrement symétrique) :
+
+| Colonne | Traitement |
+|---------|------------|
+| `emails.email` | Chiffrée au repos (TEXT, base64) ; déchiffrée à la lecture |
+| `persons.notes` | Chiffrée au repos |
+
+**TypeDecorator dialect-aware** ([crypto.py](osint-platform/app/db/crypto.py)) : le type `EncryptedText` réalise le (dé)chiffrement **dans le SQL** (`bind_expression`/`column_expression`), totalement transparent pour l'ORM (on lit/écrit du texte clair côté Python). Il est **dialect-aware** :
+- **PostgreSQL** → chiffrement pgcrypto (`Text().with_variant(_PgpText(), "postgresql")`)
+- **SQLite** (tests) → colonne TEXT en clair, aucune dépendance pgcrypto → les tests SQLite tournent sans PostgreSQL.
+
+**Recherche par hash SHA256** : le chiffrement pgcrypto n'est pas déterministe (un même email produit un chiffré différent à chaque écriture). La recherche et la déduplication passent donc par une colonne **`emails.email_hash`** (SHA256 de l'email en clair, unique, indexée) — maintenue à l'écriture par `@validates` et calculée à l'identique dans la migration.
+
+**Clé** : lue depuis `DB_ENCRYPTION_KEY` (`.env`), **jamais journalisée ni exposée en API** (elle ne circule qu'en paramètre lié SQL). Migration Alembic `f1a2b3c4d5e6` : chiffre les données existantes et backfille les hashs (upgrade/downgrade réversibles).
+
+> **Zéro fuite biométrique conservée** : l'embedding facial reste stocké en base (vecteur numérique) mais n'est jamais indexé dans Elasticsearch ; les colonnes en clair sensibles (email, notes) sont désormais chiffrées.
+
+### Module 13 — Vérification de fuites de données (HIBP & LeakCheck)
+Le CDC mentionne la **vérification de fuite de données publiques**. La source `_source_hibp` (registre `SOURCES["email"]`, active sur **toutes les recherches par email**) combine deux services gratuits, avec **dégradation propre** (None seulement si les deux échouent) :
+
+**Have I Been Pwned — Pwned Passwords (k-anonymity)**
+- `SHA1(email)` → seuls les **5 premiers caractères** sont envoyés à `GET https://api.pwnedpasswords.com/range/{prefix}`
+- Le suffixe est comparé **localement** → **l'email (et son hash complet) n'est JAMAIS envoyé à HIBP**
+- Retourne le nombre d'occurrences (`pwned_password_count`)
+
+**LeakCheck.io (API publique, sans clé)**
+- `GET https://leakcheck.io/api/public?check={email}` → `leakcheck_found` + `leakcheck_sources`
+- Rate limiter dédié **1 requête / 5 s** (en plus du limiter global 2 s)
+
+Enveloppe `OsintResult` normalisée :
+```json
+{
+  "source": "hibp", "entity": "<email>", "type": "email",
+  "data": {"pwned_password_count": 42, "leakcheck_found": true, "leakcheck_sources": ["Collection1"]},
+  "extracted": {"emails": [], "domains": [], "urls": [], "ips": [], "names": []}
+}
+```
+
+### ✅ CDC 100 % implémenté
+L'ensemble des exigences du cahier des charges est couvert : recherche/corrélation OSINT multi-sources, reconnaissance faciale (upload + webcam temps réel côté client), dashboard & graphe, sécurité/RBAC/audit, indexation full-text (Elasticsearch), **chiffrement au repos (pgcrypto)** et **vérification de fuites de données (HIBP/LeakCheck)** — le tout couvert par **243 tests** (+ 8 dédiés au chiffrement sur PostgreSQL).
+
 ### Corrections récentes (suite aux tests manuels)
 - **Graphe global vide (422)** : la borne `limit` max des endpoints de liste (`persons`, `correlations`, `emails`, `sites`, `history`) est passée à **500** — le graphe charge `limit=200` et recevait un `422` (persons était plafonné à 100), ce qui vidait le graphe.
 - **Source scraper cassée** : `_source_scraper(entity, entity_type)` est désormais enregistrée dans le registre `SOURCES` via des **lambdas** passant l'`entity_type` (`lambda e: _source_scraper(e, "domain")`…), corrigeant `missing 1 required positional argument: 'entity_type'` à chaque recherche.
@@ -517,6 +559,7 @@ osint-platform/
 │   │   ├── logging.py          # Configuration loguru
 │   │   └── security.py         # JWT + bcrypt + auth en DB
 │   ├── db/
+│   │   ├── crypto.py           # Chiffrement pgcrypto (EncryptedText, encrypt/decrypt) — Module 12
 │   │   ├── models.py           # Modèles SQLAlchemy (7 tables : users, audit_logs...)
 │   │   └── session.py          # Engine async + session factory
 │   ├── facial/
@@ -549,11 +592,12 @@ osint-platform/
 │   ├── test_report_api.py      # Tests de l'endpoint rapport (5 tests)
 │   ├── test_frontend_routes.py # Tests des routes frontend (8 tests)
 │   ├── test_security.py        # Tests sécurité (29 tests)
-│   ├── test_sources.py         # Tests des 10 sources OSINT (30 tests)
+│   ├── test_sources.py         # Tests sources OSINT + HIBP (39 tests)
 │   ├── test_scraper.py         # Tests du scraping BeautifulSoup (28 tests)
 │   ├── test_cli.py             # Tests du CLI (4 tests)
 │   ├── test_search_results.py  # Tests persistance recherches (2 tests)
 │   ├── test_elastic.py         # Tests Elasticsearch — Module 11 (26 tests)
+│   ├── test_crypto.py          # Tests chiffrement pgcrypto — Module 12 (8 tests, PostgreSQL)
 │   └── test_stream.py          # Tests stream webcam (16 tests)
 ├── frontend/
 │   ├── index.html              # Page de login
@@ -596,18 +640,22 @@ python -m pytest tests/test_correlator.py -v    # 6 tests corrélateur
 python -m pytest tests/test_report_api.py -v    # 5 tests rapport personne
 python -m pytest tests/test_frontend_routes.py -v # 6 tests routes frontend
 python -m pytest tests/test_security.py -v        # 25 tests sécurité
-python -m pytest tests/test_sources.py -v         # 30 tests sources OSINT
+python -m pytest tests/test_sources.py -v         # 39 tests sources OSINT + HIBP
 python -m pytest tests/test_scraper.py -v         # 28 tests scraping BeautifulSoup
 python -m pytest tests/test_search_results.py -v  # 2 tests persistance recherches
 python -m pytest tests/test_stream.py -v          # 16 tests stream webcam
 python -m pytest tests/test_elastic.py -v         # 26 tests Elasticsearch (Module 11)
+
+# Tests de chiffrement pgcrypto — PostgreSQL requis (skippés sur SQLite)
+TEST_DATABASE_URL=postgresql+asyncpg://osint_user:<password>@localhost:5432/osint_test \
+  python -m pytest tests/test_crypto.py -v        # 8 tests chiffrement (Module 12)
 
 # Lancer la suite sur PostgreSQL au lieu de SQLite (compatibilité)
 TEST_DATABASE_URL=postgresql+asyncpg://osint_user:<password>@localhost:5432/osint_test \
   python -m pytest tests/ -v
 ```
 
-**234 tests** couvrent :
+**243 tests** (+ 8 dédiés au chiffrement, sur PostgreSQL) couvrent :
 - Authentification JWT (token valide, expiré, invalide, identifiants erronés)
 - Validation des inputs (injection SQL bloquée par enum Pydantic)
 - Rate limiting (429 après 10 requêtes/minute)
@@ -630,6 +678,8 @@ TEST_DATABASE_URL=postgresql+asyncpg://osint_user:<password>@localhost:5432/osin
 - Routes frontend (login, dashboard, results, report, graph, stream)
 - Stream webcam client-side (caméra serveur, `/info`, `/status`, `locate_and_encode` multi-visages, `POST /analyze` : match / nouveau visage / aucun visage / base64 corrompu 422 / sans JWT 401 / rate limit 429)
 - Elasticsearch (client mocké, indexation sans fuite biométrique, `extracted` filtré, bulk_reindex, recherche full-text multi-index, `/api/search/fulltext` 200/400/401/403/422, `/api/search/status`, dégradation propre ES down)
+- Chiffrement pgcrypto — PostgreSQL (round-trip encrypt/decrypt, mauvaise clé, email/notes chiffrés au repos & déchiffrés via l'ORM/l'API, cohérence hash migration ↔ `@validates`, recherche par hash)
+- HIBP & LeakCheck (email pwné/propre, LeakCheck trouvé, résilience réseau, **k-anonymity : email jamais envoyé en clair**)
 
 ## Stack technique
 

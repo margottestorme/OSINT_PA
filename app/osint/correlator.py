@@ -183,7 +183,9 @@ def _extract_text(data: dict) -> str:
 
 
 async def _find_email(db: AsyncSession, email_addr: str) -> Email | None:
-    result = await db.execute(select(Email).where(Email.email == email_addr))
+    # Recherche via le hash SHA256 du clair (la colonne email est chiffrée / non déterministe)
+    from app.db.models import hash_email
+    result = await db.execute(select(Email).where(Email.email_hash == hash_email(email_addr)))
     return result.scalar_one_or_none()
 
 

@@ -1,3 +1,4 @@
+import hashlib
 from contextlib import contextmanager
 from unittest.mock import patch, MagicMock, AsyncMock, call
 
@@ -13,8 +14,9 @@ from app.core.config import Settings
 
 @pytest.fixture(autouse=True)
 def _no_rate_limit():
-    """Neutralise le rate limiter (pas d'attente 2s dans les tests)."""
-    with patch.object(engine._rate_limiter, "acquire", new_callable=AsyncMock):
+    """Neutralise les rate limiters (pas d'attente 2s/5s dans les tests)."""
+    with patch.object(engine._rate_limiter, "acquire", new_callable=AsyncMock), \
+         patch.object(engine._leakcheck_limiter, "acquire", new_callable=AsyncMock):
         yield
 
 
@@ -52,6 +54,51 @@ def mock_httpx_error():
     def boom(*a, **k):
         raise RuntimeError("network down")
     with patch("app.osint.engine.httpx.AsyncClient", side_effect=boom):
+        yield
+
+
+@contextmanager
+def mock_hibp(pwned_text="", pwned_status=200, leak_json=None, leak_status=200,
+              pwned_exc=None, leak_exc=None, calls=None):
+    """Patche httpx pour les deux endpoints HIBP, dispatch selon l'URL.
+
+    - pwned_text/status : réponse TEXTE de api.pwnedpasswords.com/range/{prefix}
+    - leak_json/status  : réponse JSON de leakcheck.io/api/public
+    - pwned_exc/leak_exc : exception à lever pour simuler une panne réseau ciblée
+    - calls : si fourni, liste où sont consignés les (url, kwargs) appelés (k-anonymity)
+    """
+    def make_resp(text_val, json_val, status):
+        resp = MagicMock()
+        resp.status_code = status
+        resp.text = text_val
+        resp.json = MagicMock(return_value=json_val or {})
+
+        def rfs():
+            if status >= 400:
+                raise RuntimeError(f"HTTP {status}")
+
+        resp.raise_for_status = MagicMock(side_effect=rfs)
+        return resp
+
+    async def _get(url, *a, **k):
+        if calls is not None:
+            calls.append((url, k))
+        if "pwnedpasswords" in url:
+            if pwned_exc:
+                raise pwned_exc
+            return make_resp(pwned_text, None, pwned_status)
+        if "leakcheck" in url:
+            if leak_exc:
+                raise leak_exc
+            return make_resp("", leak_json, leak_status)
+        return make_resp("", {}, 404)
+
+    client = MagicMock()
+    client.get = _get
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=client)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    with patch("app.osint.engine.httpx.AsyncClient", return_value=cm):
         yield
 
 
@@ -345,8 +392,11 @@ async def test_source_scraper_registered_passes_entity_type():
     'missing 1 required positional argument: entity_type'."""
     with patch.object(engine, "_source_scraper", new=AsyncMock(return_value=None)) as m:
         for etype in ("email", "domain", "name"):
-            # le scraper est la dernière source enregistrée pour chaque type
-            await engine.SOURCES[etype][-1]("cible")
+            # On repère les lambdas déléguant à _source_scraper (via leur closure), sans
+            # dépendre de leur position dans le registre (d'autres sources peuvent suivre).
+            for src in engine.SOURCES[etype]:
+                if getattr(src, "__name__", "") == "<lambda>" and "_source_scraper" in src.__code__.co_names:
+                    await src("cible")
     assert m.await_args_list == [
         call("cible", "email"), call("cible", "domain"), call("cible", "name"),
     ]
@@ -390,6 +440,70 @@ async def test_source_scraper_email_no_urls_returns_none():
         r = await engine._source_scraper("a@b.fr", "email")
     assert r is None
     sb.assert_not_awaited()
+
+
+# =============================================================
+# HIBP — vérification de fuites de données (Module 13)
+# =============================================================
+
+def _sha1_upper(email: str) -> str:
+    return hashlib.sha1(email.strip().lower().encode()).hexdigest().upper()
+
+
+@pytest.mark.asyncio
+async def test_hibp_pwned_password_found():
+    """Email dont le SHA1 apparaît dans Pwned Passwords → compte > 0."""
+    email = "pwned@example.com"
+    suffix = _sha1_upper(email)[5:]
+    pwned_text = f"{suffix}:42\r\nFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF:7"
+    with mock_hibp(pwned_text=pwned_text, leak_json={"found": 0}):
+        r = await engine._source_hibp(email)
+    assert r["source"] == "hibp" and r["type"] == "email"
+    assert r["data"]["pwned_password_count"] == 42
+    assert r["extracted"]["emails"] == []  # enveloppe extracted vide
+
+
+@pytest.mark.asyncio
+async def test_hibp_pwned_password_clean():
+    """Email absent de la réponse (préfixe partagé, suffixe absent) → compte 0."""
+    with mock_hibp(pwned_text="FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF:3", leak_json={"found": 0}):
+        r = await engine._source_hibp("clean@example.com")
+    assert r["data"]["pwned_password_count"] == 0
+    assert r["data"]["leakcheck_found"] is False
+
+
+@pytest.mark.asyncio
+async def test_hibp_leakcheck_found():
+    """LeakCheck trouve l'email → leakcheck_found True + sources listées."""
+    leak = {"found": 2, "sources": [{"name": "Collection1"}, {"name": "Breach2"}]}
+    with mock_hibp(pwned_text="", leak_json=leak):
+        r = await engine._source_hibp("leaked@example.com")
+    assert r["data"]["leakcheck_found"] is True
+    assert r["data"]["leakcheck_sources"] == ["Collection1", "Breach2"]
+
+
+@pytest.mark.asyncio
+async def test_hibp_both_fail_returns_none():
+    """Les deux sources en erreur réseau → None (dégradation propre)."""
+    with mock_hibp(pwned_exc=RuntimeError("net"), leak_exc=RuntimeError("net")):
+        assert await engine._source_hibp("x@y.fr") is None
+
+
+@pytest.mark.asyncio
+async def test_hibp_kanonymity_email_never_sent():
+    """K-anonymity : seuls les 5 premiers chars du SHA1 sont envoyés à HIBP."""
+    email = "victim@example.com"
+    sha1 = _sha1_upper(email)
+    calls = []
+    with mock_hibp(pwned_text="FFFF:1", leak_json={"found": 0}, calls=calls):
+        await engine._source_hibp(email)
+
+    pwned_urls = [url for url, _ in calls if "pwnedpasswords" in url]
+    assert pwned_urls, "l'endpoint Pwned Passwords doit être interrogé"
+    url = pwned_urls[0]
+    assert url.endswith("/range/" + sha1[:5])          # uniquement les 5 premiers chars
+    assert email not in url                             # jamais l'email en clair
+    assert sha1 not in url and sha1[5:] not in url      # ni le hash complet ni le suffixe
 
 
 # =============================================================

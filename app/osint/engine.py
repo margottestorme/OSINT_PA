@@ -834,3 +834,92 @@ async def _source_scraper(entity: str, entity_type: str) -> OsintResult | None:
 SOURCES["email"].append(lambda e: _source_scraper(e, "email"))
 SOURCES["domain"].append(lambda e: _source_scraper(e, "domain"))
 SOURCES["name"].append(lambda e: _source_scraper(e, "name"))
+
+
+# =============================================================
+# Source HIBP — vérification de fuites de données publiques (Module 13)
+# =============================================================
+
+# LeakCheck.io (API publique) impose ~1 requête / 5 s : limiter dédié plus strict que
+# le limiter global (2 s) partagé par les autres sources externes.
+_leakcheck_limiter = RateLimiter(min_interval=5.0)
+
+
+async def _hibp_pwned_password_count(email: str) -> int | None:
+    """Occurrences du SHA1 de l'email dans HIBP Pwned Passwords, en *k-anonymity*.
+
+    Seuls les 5 premiers caractères du SHA1 sont transmis à l'API (endpoint `range`) ;
+    le suffixe est comparé localement → l'email complet (et son hash complet) n'est
+    JAMAIS envoyé. Renvoie 0 si absent, le compte si présent, None en cas d'erreur.
+    """
+    await _rate_limiter.acquire()
+    sha1 = hashlib.sha1(email.strip().lower().encode()).hexdigest().upper()
+    prefix, suffix = sha1[:5], sha1[5:]
+    logger.info(f"[hibp] Pwned Passwords k-anonymity : préfixe {prefix} (email masqué)")
+    try:
+        async with httpx.AsyncClient(timeout=_timeout, headers=_UA) as client:
+            resp = await client.get(f"https://api.pwnedpasswords.com/range/{prefix}")
+        resp.raise_for_status()
+        # Réponse texte : lignes "SUFFIXE:COMPTE"
+        for line in resp.text.splitlines():
+            line_suffix, _, count = line.partition(":")
+            if line_suffix.strip().upper() == suffix:
+                return int(count.strip() or 0)
+        return 0  # préfixe trouvé mais suffixe absent → non exposé
+    except Exception as e:
+        logger.warning(f"[hibp] Pwned Passwords indisponible : {e}")
+        return None
+
+
+async def _leakcheck_lookup(email: str) -> tuple[bool | None, list[str]]:
+    """Recherche l'email dans LeakCheck.io (API publique, sans clé).
+
+    Renvoie (found, sources) : found=None en cas d'erreur réseau (résilience), False si
+    non trouvé, True si trouvé. Respecte la limite publique (1 req / 5 s).
+    """
+    await _leakcheck_limiter.acquire()
+    try:
+        async with httpx.AsyncClient(timeout=_timeout, headers=_UA) as client:
+            resp = await client.get(
+                "https://leakcheck.io/api/public", params={"check": email},
+            )
+        resp.raise_for_status()
+        payload = resp.json()
+        found_count = int(payload.get("found") or 0)
+        sources = [
+            s.get("name") for s in payload.get("sources", [])
+            if isinstance(s, dict) and s.get("name")
+        ]
+        return found_count > 0, sources
+    except Exception as e:
+        logger.warning(f"[hibp] LeakCheck indisponible : {e}")
+        return None, []
+
+
+async def _source_hibp(email: str) -> OsintResult | None:
+    """Vérifie l'exposition d'un email dans des fuites de données publiques.
+
+    Combine HIBP Pwned Passwords (k-anonymity, gratuit) et LeakCheck.io (API publique).
+    Dégradation propre : renvoie None uniquement si les DEUX sources échouent.
+    """
+    logger.info(f"[hibp] Vérification de fuite pour {email}")
+    pwned_count = await _hibp_pwned_password_count(email)
+    leak_found, leak_sources = await _leakcheck_lookup(email)
+
+    if pwned_count is None and leak_found is None:
+        logger.warning(f"[hibp] Les deux sources ont échoué pour {email}")
+        return None
+
+    data = {
+        "pwned_password_count": pwned_count,
+        "leakcheck_found": bool(leak_found),
+        "leakcheck_sources": leak_sources,
+    }
+    logger.info(
+        f"[hibp] {email} → pwned={pwned_count}, "
+        f"leakcheck={data['leakcheck_found']} ({len(leak_sources)} source(s))"
+    )
+    return _normalize("hibp", email, "email", data=data, extracted={})
+
+
+SOURCES["email"].append(lambda e: _source_hibp(e))

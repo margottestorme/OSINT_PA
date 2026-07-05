@@ -1,10 +1,22 @@
 from datetime import datetime, timezone
+import hashlib
 
 from sqlalchemy import Boolean, String, Float, Integer, DateTime, ForeignKey, Index, Text, text
 from sqlalchemy.types import JSON
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.db.session import Base
+from app.db.crypto import EncryptedText
+
+
+def hash_email(value: str) -> str:
+    """SHA256 hex de l'email normalisé (minuscules, sans espaces).
+
+    Sert d'index de recherche/déduplication sur l'email *en clair* — indispensable car
+    le chiffrement pgcrypto est non déterministe (le même email produit un chiffré
+    différent à chaque écriture, donc inutilisable pour une contrainte d'unicité).
+    """
+    return hashlib.sha256(value.strip().lower().encode("utf-8")).hexdigest()
 
 
 class User(Base):
@@ -33,7 +45,7 @@ class Person(Base):
     confidence_score: Mapped[float] = mapped_column(Float, default=0.0)
     embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
     image_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)  # chiffré au repos (Module 12)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -49,11 +61,17 @@ class Person(Base):
 
 
 class Email(Base):
-    """Adresse email associée à une personne."""
+    """Adresse email associée à une personne.
+
+    L'email est **chiffré au repos** (pgcrypto sur PostgreSQL — Module 12). La recherche
+    et la déduplication passent par `email_hash` (SHA256 de l'email en clair), car la
+    colonne chiffrée n'est pas déterministe.
+    """
     __tablename__ = "emails"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    email: Mapped[str] = mapped_column(String(255), unique=True)
+    email: Mapped[str] = mapped_column(EncryptedText)  # chiffré au repos
+    email_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)  # SHA256 du clair
     source: Mapped[str] = mapped_column(String(255))
     person_id: Mapped[int | None] = mapped_column(ForeignKey("persons.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -62,6 +80,13 @@ class Email(Base):
 
     person: Mapped[Person | None] = relationship(back_populates="emails")
     correlations: Mapped[list["Correlation"]] = relationship(back_populates="email", cascade="all, delete-orphan")
+
+    @validates("email")
+    def _sync_email_hash(self, key, value):
+        """Recalcule email_hash à chaque écriture de l'email (SHA256 du clair)."""
+        if value is not None:
+            self.email_hash = hash_email(value)
+        return value
 
 
 class Site(Base):
