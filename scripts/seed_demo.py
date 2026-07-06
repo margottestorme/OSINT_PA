@@ -23,7 +23,8 @@ import numpy as np  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 from app.db.session import async_session  # noqa: E402
 from app.db.models import (  # noqa: E402
-    AuditLog, Correlation, Email, Person, SearchHistory, SearchResult, Site, User,
+    AuditLog, Correlation, Email, Investigation, InvestigationEntity,
+    Person, SearchHistory, SearchResult, Site, User,
 )
 
 GREEN, CYAN, YELLOW, BOLD, RESET = "\033[92m", "\033[96m", "\033[93m", "\033[1m", "\033[0m"
@@ -169,7 +170,8 @@ AUDIT = (
 
 
 async def seed() -> dict:
-    counts = dict(persons=0, emails=0, sites=0, correlations=0, searches=0, results=0, audit=0)
+    counts = dict(persons=0, emails=0, sites=0, correlations=0, searches=0, results=0,
+                  investigations=0, inv_entities=0, audit=0)
 
     async with async_session() as db:
         admin = (await db.execute(select(User).where(User.username == "admin"))).scalar_one_or_none()
@@ -230,22 +232,61 @@ async def seed() -> dict:
             counts["correlations"] += 1
 
         # Recherches + résultats
+        search_objs = []  # tracé (créées + existantes) pour rattachement à l'enquête démo
         for s in SEARCHES:
             existing = (await db.execute(select(SearchHistory).where(
                 SearchHistory.query == s["query"], SearchHistory.query_type == s["type"],
             ))).scalar_one_or_none()
             if existing:
+                search_objs.append(existing)
                 continue
             hist = SearchHistory(query=s["query"], query_type=s["type"],
                                  result_count=len(s["results"]), created_at=ts(s["days"]))
             db.add(hist)
             await db.flush()
+            search_objs.append(hist)
             counts["searches"] += 1
             for r in s["results"]:
                 db.add(SearchResult(search_id=hist.id, source=r["source"], entity=r["entity"],
                                     entity_type=r["type"], data=r["data"], extracted=r["extracted"],
                                     created_at=ts(s["days"])))
                 counts["results"] += 1
+
+        # Enquête de démo (Module 14) — rattache les 3 personnes + les 6 recherches.
+        # Idempotent : get-or-create par titre, puis get-or-create de chaque rattachement.
+        INV_TITLE = "Enquête démo — demo-osint.fr"
+        investigation = (await db.execute(select(Investigation).where(
+            Investigation.title == INV_TITLE,
+        ))).scalar_one_or_none()
+        if investigation is None:
+            investigation = Investigation(
+                title=INV_TITLE,
+                description="Investigation sur la startup fictive demo-osint.fr et ses membres",
+                status="open",
+                analyst_id=admin_id,
+                created_at=ts(5.0),
+            )
+            db.add(investigation)
+            await db.flush()
+            counts["investigations"] += 1
+
+        inv_links = (
+            [("person", p.id, ts(4.9)) for p in person_objs]
+            + [("search", h.id, ts(s["days"])) for h, s in zip(search_objs, SEARCHES)]
+        )
+        for entity_type, entity_id, added in inv_links:
+            existing = (await db.execute(select(InvestigationEntity).where(
+                InvestigationEntity.investigation_id == investigation.id,
+                InvestigationEntity.entity_type == entity_type,
+                InvestigationEntity.entity_id == entity_id,
+            ))).scalar_one_or_none()
+            if existing:
+                continue
+            db.add(InvestigationEntity(
+                investigation_id=investigation.id, entity_type=entity_type,
+                entity_id=entity_id, added_by=admin_id, added_at=added,
+            ))
+            counts["inv_entities"] += 1
 
         # Logs d'audit
         for a in AUDIT:
@@ -283,6 +324,8 @@ def main() -> None:
     line("corrélations créées", c["correlations"])
     print(f"  {GREEN if c['searches'] else YELLOW}{'✅' if c['searches'] else '•'}{RESET} "
           f"{c['searches']} recherches + {c['results']} SearchResults créés")
+    print(f"  {GREEN if c['investigations'] else YELLOW}{'✅' if c['investigations'] else '•'}{RESET} "
+          f"{c['investigations']} enquête + {c['inv_entities']} entités rattachées")
     line("logs d'audit créés", c["audit"])
     print(f"\n{GREEN}{BOLD}Seed terminé.{RESET} Ouvrez le dashboard pour visualiser la démo.")
 

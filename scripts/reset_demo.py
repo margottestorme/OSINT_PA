@@ -22,9 +22,14 @@ from app.core.security import hash_password  # noqa: E402
 GREEN, RED, YELLOW, BOLD, RESET = "\033[92m", "\033[91m", "\033[93m", "\033[1m", "\033[0m"
 
 # Ordre sans importance : CASCADE gère les FK. alembic_version est volontairement exclue.
+# Les tables des Modules 14/15 sont listées EXPLICITEMENT : sinon elles ne sont vidées
+# que par effet CASCADE (depuis users) et leurs séquences d'ID ne repartent pas de 1.
 TABLES = [
     "audit_logs", "correlations", "search_results", "search_history",
-    "emails", "sites", "persons", "users",
+    "emails", "sites", "persons",
+    "investigation_entities", "investigations",
+    "username_results", "username_searches",
+    "users",
 ]
 
 

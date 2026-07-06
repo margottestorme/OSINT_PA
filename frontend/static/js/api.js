@@ -31,6 +31,22 @@ const API = (() => {
         return h;
     }
 
+    // Normalise le `detail` d'une réponse d'erreur FastAPI en message affichable.
+    // - detail = tableau (erreurs de validation 422) → premier message lisible
+    // - detail = chaîne (HTTPException) → utilisé tel quel
+    // - sinon → repli générique avec le code HTTP
+    function extractErrorMessage(data, status) {
+        const detail = data && data.detail;
+        if (Array.isArray(detail)) {
+            const first = detail[0];
+            return (first && (first.msg || first.message)) || "Erreur de validation";
+        }
+        if (typeof detail === "string") {
+            return detail;
+        }
+        return "Erreur serveur (" + status + ")";
+    }
+
     async function _request(method, url, options = {}) {
         const config = {
             method,
@@ -59,7 +75,7 @@ const API = (() => {
 
         if (!resp.ok) {
             const data = await resp.json().catch(() => ({}));
-            throw new Error(data.detail || "Erreur serveur (" + resp.status + ")");
+            throw new Error(extractErrorMessage(data, resp.status));
         }
 
         return resp.json();
@@ -223,7 +239,7 @@ const API = (() => {
         }
         if (!resp.ok) {
             const data = await resp.json().catch(() => ({}));
-            throw new Error(data.detail || "Erreur serveur (" + resp.status + ")");
+            throw new Error(extractErrorMessage(data, resp.status));
         }
         const blob = await resp.blob();
         const cd = resp.headers.get("Content-Disposition") || "";
