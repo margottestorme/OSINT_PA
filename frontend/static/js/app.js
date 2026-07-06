@@ -29,6 +29,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (document.getElementById("ft-results")) initSearchPage();
     if (document.getElementById("investigations-list")) initInvestigations();
     if (document.getElementById("investigation-detail")) initInvestigationDetail();
+    if (document.getElementById("uname-grid")) initUsername();
 });
 
 
@@ -449,6 +450,12 @@ function initReport() {
     document.getElementById("person-edit").addEventListener("click", () => {
         if (reportPerson) openEditModal(reportPerson, () => loadReport(reportPersonId));
     });
+    document.getElementById("person-usernames").addEventListener("click", () => {
+        if (!reportPerson) return;
+        const slug = usernameSlug(reportPerson.first_name, reportPerson.last_name);
+        if (!slug) { toast("Nom insuffisant pour déduire un pseudo", "info"); return; }
+        window.location.href = "/username?q=" + encodeURIComponent(slug);
+    });
     document.getElementById("emails-body").addEventListener("click", onReportEntityClick);
     document.getElementById("sites-body").addEventListener("click", onReportEntityClick);
 
@@ -723,6 +730,7 @@ const INV_ENTITY_META = {
     site:        { icon: "globe",     label: "Site",       cls: "site" },
     correlation: { icon: "git-merge", label: "Corrélation", cls: "corr" },
     search:      { icon: "search",    label: "Recherche",  cls: "" },
+    username_search: { icon: "at-sign", label: "Pseudo", cls: "" },
 };
 const INV_STATUS_META = {
     open:     { cls: "open",     label: "Ouverte" },
@@ -1869,4 +1877,363 @@ function formatDate(iso) {
     if (!iso) return "—";
     const d = new Date(iso);
     return d.toLocaleDateString("fr-FR") + " " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+}
+
+
+// =====================================================
+// Énumération de pseudos (Module 15) — username.html
+// SSE consommé via fetch+ReadableStream (EventSource ne
+// peut pas porter le header Authorization / JWT).
+// =====================================================
+
+const UNAME_RE = /^[A-Za-z0-9._-]{3,30}$/;
+const UNAME_CAT_LABELS = {
+    dev: "Dev", social: "Social", gaming: "Gaming", forum: "Forum",
+    creative: "Creative", professional: "Pro", dating: "Dating",
+    crypto: "Crypto", news: "News",
+};
+
+// Icônes SVG inline (évite 157 appels lucide.createIcons pendant le stream)
+const UNAME_SVG = {
+    check: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+    x: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+    alert: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+};
+
+let unameState = null;
+let unameAbort = null;
+let unameAudioCtx = null;
+
+// "Jean", "Dupont" -> "jean.dupont" (sans accents, alphanumérique, 3–30 chars)
+function usernameSlug(first, last) {
+    const norm = (s) => (s || "")
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase().replace(/[^a-z0-9]/g, "");
+    let slug = [norm(first), norm(last)].filter(Boolean).join(".");
+    if (slug.length > 30) slug = slug.slice(0, 30);
+    return slug.length >= 3 ? slug : "";
+}
+
+function initUsername() {
+    setUserChip();
+    initAddToInvestigationModal();
+
+    document.getElementById("uname-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        startUsernameSearch(document.getElementById("uname-input").value);
+    });
+
+    // Filtres par catégorie (délégation — fonctionne même pendant le stream)
+    document.getElementById("uname-filters").addEventListener("click", (e) => {
+        const tab = e.target.closest(".tab");
+        if (!tab) return;
+        document.querySelectorAll("#uname-filters .tab").forEach((t) => t.classList.toggle("active", t === tab));
+        if (unameState) unameState.catFilter = tab.getAttribute("data-cat");
+        applyUnameFilters();
+    });
+    document.getElementById("uname-only-found").addEventListener("change", (e) => {
+        if (unameState) unameState.onlyFound = e.target.checked;
+        applyUnameFilters();
+    });
+    document.getElementById("uname-sort").addEventListener("change", (e) => {
+        if (unameState) unameState.sort = e.target.value;
+        applyUnameSort();
+    });
+
+    // Boutons du résumé final
+    document.getElementById("uname-export").addEventListener("click", exportUsernameJson);
+    document.getElementById("uname-copy").addEventListener("click", copyFoundUrls);
+    document.getElementById("uname-add-inv").addEventListener("click", addUsernameSearchToInvestigation);
+
+    // Construit les filtres de catégorie depuis le registre réel
+    API.getUsernamePlatforms().then((meta) => {
+        unamePlatformTotal = meta.total;
+        const container = document.getElementById("uname-filters");
+        meta.categories.forEach((cat) => {
+            const b = document.createElement("button");
+            b.className = "tab";
+            b.setAttribute("data-cat", cat);
+            b.textContent = UNAME_CAT_LABELS[cat] || cat;
+            container.appendChild(b);
+        });
+    }).catch(() => { /* total sera fixé par l'event complete */ });
+
+    // Préremplissage + lancement auto depuis la page rapport (/username?q=prenom.nom)
+    const q = (new URLSearchParams(window.location.search).get("q") || "").trim();
+    if (q) {
+        document.getElementById("uname-input").value = q;
+        if (UNAME_RE.test(q)) startUsernameSearch(q);
+    }
+}
+
+// Persiste la recherche (résultats déjà collectés) puis la rattache via le modal partagé.
+async function addUsernameSearchToInvestigation() {
+    if (!unameState || !unameState.done) {
+        toast("Lancez d'abord une recherche", "info");
+        return;
+    }
+    const btn = document.getElementById("uname-add-inv");
+    btn.disabled = true;
+    try {
+        const saved = await API.saveUsernameSearch(unameState.username, unameState.results.map((r) => ({
+            platform: r.platform, url: r.url, category: r.category,
+            found: r.found, response_time_ms: r.response_time_ms, error: r.error,
+        })));
+        openAddToInvestigationModal("username_search", saved.search_id, `Pseudo « ${unameState.username} »`);
+    } catch (err) {
+        toast(err.message, "error");
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+let unamePlatformTotal = 0;
+
+function startUsernameSearch(raw) {
+    const username = (raw || "").trim();
+    const errEl = document.getElementById("uname-error");
+    errEl.classList.add("hidden");
+
+    if (!UNAME_RE.test(username)) {
+        errEl.textContent = "Username invalide : 3 à 30 caractères, lettres/chiffres/._- uniquement.";
+        errEl.classList.remove("hidden");
+        return;
+    }
+
+    // Débloque l'audio (nécessite un geste utilisateur — le submit en est un)
+    if (!unameAudioCtx) {
+        try { unameAudioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch { unameAudioCtx = null; }
+    }
+
+    // Annule un éventuel stream précédent
+    if (unameAbort) unameAbort.abort();
+    unameAbort = new AbortController();
+
+    // Réinitialise l'état + l'UI
+    const activeTab = document.querySelector("#uname-filters .tab.active");
+    unameState = {
+        username, results: [], found: 0, checked: 0, errors: 0,
+        total: unamePlatformTotal || 0,
+        catFilter: activeTab ? activeTab.getAttribute("data-cat") : "",
+        onlyFound: document.getElementById("uname-only-found").checked,
+        sort: document.getElementById("uname-sort").value,
+        soundOn: document.getElementById("uname-sound").checked,
+        done: false,
+    };
+
+    document.getElementById("uname-grid").innerHTML = "";
+    document.getElementById("uname-empty").classList.add("hidden");
+    document.getElementById("uname-summary").classList.add("hidden");
+    document.getElementById("uname-stats").classList.remove("hidden");
+    document.getElementById("uname-toolbar").classList.remove("hidden");
+    document.getElementById("uname-found").textContent = "0";
+    document.getElementById("uname-checked").textContent = "0";
+    document.getElementById("uname-total").textContent = unameState.total || "…";
+    document.getElementById("uname-errors").textContent = "0";
+    document.getElementById("uname-errors").parentElement.classList.add("hidden");
+    document.getElementById("uname-progress-bar").style.width = "0%";
+    setUnameLoading(true);
+
+    streamUsernameCheck(username, unameAbort.signal);
+}
+
+function setUnameLoading(loading) {
+    const btn = document.getElementById("uname-submit");
+    btn.disabled = loading;
+    btn.querySelector("span").textContent = loading ? "Recherche…" : "Rechercher";
+    document.getElementById("uname-input").disabled = loading;
+}
+
+async function streamUsernameCheck(username, signal) {
+    let resp;
+    try {
+        resp = await fetch("/api/username/check?username=" + encodeURIComponent(username), {
+            headers: { Authorization: "Bearer " + API.getToken() },
+            signal,
+        });
+    } catch (err) {
+        if (err.name === "AbortError") return;
+        setUnameLoading(false);
+        toast("Impossible de contacter le serveur", "error");
+        return;
+    }
+
+    if (resp.status === 401 || resp.status === 403) { API.clearToken(); window.location.href = "/"; return; }
+    if (resp.status === 429) { setUnameLoading(false); toast("Une recherche toutes les 30 secondes maximum", "error"); return; }
+    if (!resp.ok) {
+        setUnameLoading(false);
+        const data = await resp.json().catch(() => ({}));
+        const errEl = document.getElementById("uname-error");
+        errEl.textContent = data.detail || "Erreur serveur (" + resp.status + ")";
+        errEl.classList.remove("hidden");
+        return;
+    }
+
+    // Lecture du flux SSE : découpe sur les doubles sauts de ligne, parse "data: {...}"
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            let sep;
+            while ((sep = buffer.indexOf("\n\n")) !== -1) {
+                const chunk = buffer.slice(0, sep);
+                buffer = buffer.slice(sep + 2);
+                const line = chunk.split("\n").find((l) => l.startsWith("data: "));
+                if (!line) continue;
+                let event;
+                try { event = JSON.parse(line.slice(6)); } catch { continue; }
+                if (event.type === "complete") finishUsernameSearch(event);
+                else onUsernameResult(event);
+            }
+        }
+        // Flux terminé sans event "complete" (coupure serveur/réseau)
+        if (unameState && !unameState.done) {
+            setUnameLoading(false);
+            toast("Flux interrompu avant la fin — relancez la recherche", "info");
+        }
+    } catch (err) {
+        if (err.name === "AbortError") return;  // nouvelle recherche ou navigation
+        if (unameState && !unameState.done) {
+            setUnameLoading(false);
+            toast("Connexion interrompue", "error");
+        }
+    }
+}
+
+function onUsernameResult(result) {
+    if (!unameState) return;
+    unameState.results.push(result);
+    unameState.checked += 1;
+    if (result.error) unameState.errors += 1;
+    else if (result.found) unameState.found += 1;
+
+    // Compteurs
+    document.getElementById("uname-found").textContent = unameState.found;
+    document.getElementById("uname-checked").textContent = unameState.checked;
+    if (unameState.errors > 0) {
+        document.getElementById("uname-errors").textContent = unameState.errors;
+        document.getElementById("uname-errors").parentElement.classList.remove("hidden");
+    }
+    // Barre de progression
+    if (unameState.total) {
+        const pct = Math.min(100, Math.round(unameState.checked / unameState.total * 100));
+        document.getElementById("uname-progress-bar").style.width = pct + "%";
+    }
+
+    // Badge
+    const node = buildUnameBadge(result);
+    result._node = node;
+    applyUnameFilterToNode(node, result);
+    document.getElementById("uname-grid").appendChild(node);
+    if (unameState.sort !== "response") applyUnameSort();
+
+    // Son de notification si trouvé
+    if (result.found && unameState.soundOn) playFoundBeep();
+}
+
+function buildUnameBadge(result) {
+    const state = result.error ? "errored" : (result.found ? "found" : "notfound");
+    const icon = result.error ? UNAME_SVG.alert : (result.found ? UNAME_SVG.check : UNAME_SVG.x);
+    const cat = UNAME_CAT_LABELS[result.category] || result.category;
+
+    const el = document.createElement(result.found ? "a" : "div");
+    el.className = "uname-badge " + state;
+    el.setAttribute("data-category", result.category);
+    el.setAttribute("data-found", result.found ? "1" : "0");
+    if (result.found) { el.href = result.url; el.target = "_blank"; el.rel = "noopener"; }
+    el.innerHTML =
+        `<div class="uname-head">${icon}<span class="uname-name">${escapeHtml(result.platform)}</span></div>` +
+        `<div class="uname-cat">${escapeHtml(cat)}</div>`;
+    return el;
+}
+
+function applyUnameFilterToNode(node, result) {
+    if (!unameState) return;
+    const hideByCat = unameState.catFilter && result.category !== unameState.catFilter;
+    const hideByFound = unameState.onlyFound && !result.found;
+    node.classList.toggle("filtered", Boolean(hideByCat || hideByFound));
+}
+
+function applyUnameFilters() {
+    if (!unameState) return;
+    unameState.results.forEach((r) => { if (r._node) applyUnameFilterToNode(r._node, r); });
+}
+
+function applyUnameSort() {
+    if (!unameState) return;
+    const grid = document.getElementById("uname-grid");
+    const arr = unameState.results.filter((r) => r._node);
+    const cmp = {
+        alpha: (a, b) => a.platform.localeCompare(b.platform),
+        category: (a, b) => (a.category.localeCompare(b.category)) || a.platform.localeCompare(b.platform),
+        response: () => 0,  // ordre d'arrivée = ordre du tableau
+    }[unameState.sort] || (() => 0);
+    const ordered = unameState.sort === "response" ? arr : [...arr].sort(cmp);
+    ordered.forEach((r) => grid.appendChild(r._node));  // appendChild déplace le nœud
+}
+
+function finishUsernameSearch(summary) {
+    if (!unameState) return;
+    unameState.done = true;
+    unameState.total = summary.total || unameState.checked;
+    if (typeof summary.found === "number") unameState.found = summary.found;
+    if (typeof summary.errors === "number") unameState.errors = summary.errors;
+
+    document.getElementById("uname-total").textContent = unameState.total;
+    document.getElementById("uname-found").textContent = unameState.found;
+    document.getElementById("uname-checked").textContent = unameState.checked;
+    document.getElementById("uname-progress-bar").style.width = "100%";
+    setUnameLoading(false);
+
+    document.getElementById("uname-summary-title").textContent =
+        `${unameState.found} compte${unameState.found > 1 ? "s" : ""} trouvé${unameState.found > 1 ? "s" : ""} sur ${unameState.checked} vérifié${unameState.checked > 1 ? "s" : ""}`;
+    document.getElementById("uname-summary-sub").textContent =
+        `Pseudo « ${unameState.username} » · ${unameState.errors} erreur${unameState.errors > 1 ? "s" : ""}`;
+    document.getElementById("uname-summary").classList.remove("hidden");
+}
+
+function foundUrls() {
+    return (unameState ? unameState.results : []).filter((r) => r.found).map((r) => r.url);
+}
+
+function exportUsernameJson() {
+    if (!unameState) return;
+    downloadJson(`usernames-${unameState.username}.json`, {
+        username: unameState.username,
+        found: unameState.found,
+        checked: unameState.checked,
+        errors: unameState.errors,
+        results: unameState.results.map((r) => ({
+            platform: r.platform, url: r.url, category: r.category,
+            found: r.found, response_time_ms: r.response_time_ms, error: r.error,
+        })),
+    });
+}
+
+function copyFoundUrls() {
+    const urls = foundUrls();
+    if (!urls.length) { toast("Aucune URL trouvée à copier", "info"); return; }
+    navigator.clipboard.writeText(urls.join("\n"))
+        .then(() => toast(`${urls.length} URL${urls.length > 1 ? "s" : ""} copiée${urls.length > 1 ? "s" : ""}`, "success"))
+        .catch(() => toast("Copie impossible", "error"));
+}
+
+function playFoundBeep() {
+    if (!unameAudioCtx) return;
+    try {
+        const o = unameAudioCtx.createOscillator();
+        const g = unameAudioCtx.createGain();
+        o.type = "sine";
+        o.frequency.value = 880;
+        o.connect(g); g.connect(unameAudioCtx.destination);
+        const t = unameAudioCtx.currentTime;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.14, t + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+        o.start(t); o.stop(t + 0.16);
+    } catch { /* audio indisponible */ }
 }

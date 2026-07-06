@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)
-![Tests](https://img.shields.io/badge/tests-270%20passed%20%2B8%20PG-brightgreen)
+![Tests](https://img.shields.io/badge/tests-293%20passed%20%2B8%20PG-brightgreen)
 ![License](https://img.shields.io/badge/licence-usage%20acad%C3%A9mique-orange)
 
 Plateforme OSINT (Open Source Intelligence) académique développée dans le cadre du **projet annuel ESGI** en cybersécurité (4e année). Elle permet la recherche, l'extraction et la corrélation d'entités à partir de sources publiques et légales, la reconnaissance faciale sur images statiques, et l'enrichissement automatique croisé entre les deux modules.
@@ -399,8 +399,43 @@ Passage d'un **ensemble d'outils** à une **plateforme d'investigation** : les e
 
 **Boutons « Ajouter à une enquête »** — modal partagé et réutilisable (liste déroulante des enquêtes ouvertes + note), disponible sur le **dashboard** (chaque personne, chaque recherche de l'historique) et la **page rapport** (chaque email, chaque site). Toast de confirmation « Ajouté à l'enquête X ».
 
+### Module 15 — Énumération de pseudos (type Sherlock/Maigret)
+À partir d'un pseudo, teste sa présence sur **157 plateformes publiques** en temps réel et affiche une **grille de badges qui se remplit en direct**. Le module OSINT le plus visuel de la plateforme.
+
+**Registre déclaratif de 157 plateformes** ([username_checker.py](osint-platform/app/osint/username_checker.py)) réparties sur **9 catégories** (dev, social, gaming, forum, creative, professional, dating, crypto, news). Ajouter une plateforme = ajouter un dict (aucun `if/elif`), comme le registre `SOURCES`. Deux méthodes de détection :
+- `status_code` : 200 = trouvé, 404 = pas trouvé.
+- `not_found_text` : pour les soft-404 (page 200 même absente) — cherche un marqueur d'absence (ex. Steam, eBay, HackerNews).
+
+**Moteur asynchrone résilient**
+- `check_username()` : timeout **8 s** par plateforme, **User-Agent rotatif** (5 UA), ne lève jamais (toute erreur → champ `error`).
+- `check_all_platforms()` : **générateur async** qui *yield au fil de l'eau* (`asyncio.as_completed`), concurrence bornée par un **semaphore (20)**, **timeout global 30 s** (les requêtes en vol sont annulées proprement).
+
+**Grille live en SSE** ([username.html](osint-platform/frontend/username.html))
+- Le stream est consommé via **`fetch` + `ReadableStream`** (et non `EventSource`, qui ne peut pas porter le header `Authorization`/JWT) ; `AbortController` coupe proprement le flux (le serveur détecte la déconnexion et annule les tâches).
+- Chaque badge apparaît avec une **animation fade-in + slide-up** dès son arrivée. **Hiérarchie visuelle** : trouvé = grand, vert, cliquable ; non trouvé = petit, gris, discret ; erreur = orange.
+- **Filtres par catégorie** et toggle **« uniquement les trouvés »** actifs *pendant* la recherche ; tri (ordre de réponse / alphabétique / catégorie).
+- **Son de notification** (Web Audio API, oscillateur) à chaque compte trouvé, **désactivable**.
+- Barre de progression temps réel, compteurs live, résumé final (Export JSON, Copier les URLs trouvées, Ajouter à une enquête).
+
+**Endpoints** (JWT requis, validation `^[A-Za-z0-9._-]{3,30}$` → 422, rate-limit **1 recherche / 30 s** par utilisateur)
+
+| Endpoint | Rôle |
+|----------|------|
+| `GET /api/username/platforms` | Total (157) + catégories (pour l'UI) |
+| `GET /api/username/check?username=` | **Stream SSE** temps réel (`text/event-stream`), event final `{type:"complete", found, not_found, errors}` |
+| `GET /api/username/search/{username}` | Énumération **persistée** en tâche de fond |
+| `POST /api/username/save` | Persiste des résultats **déjà collectés** (sans ré-énumérer) |
+
+**Intégration OSINT & enquêtes**
+- Les **URLs trouvées deviennent des `Site`** en base (dédup sur l'URL). Si **GitHub** est trouvé, `_source_github()` est lancé en arrière-plan pour enrichir (URLs de profils → Sites).
+- Une recherche de pseudo est rattachable à une enquête via un **type d'entité dédié `username_search`** (Module 14) : présent dans la timeline forensique (`@john (2/3 trouvés)`) et le **rapport PDF** (section « Recherches de pseudos »).
+- Sur la **page rapport personne**, un bouton **« Rechercher ses pseudos »** déduit un slug `prenom.nom` et ouvre `/username?q=…` (préremplissage + lancement automatique).
+
+### Tables `username_searches` & `username_results`
+Migration `b2c3d4e5f6a7` : `username_searches` (username, analyste, total/trouvés, statut) et `username_results` (plateforme, url, catégorie, found, temps de réponse, erreur).
+
 ### ✅ CDC 100 % implémenté (+ extensions)
-L'ensemble des exigences du cahier des charges est couvert : recherche/corrélation OSINT multi-sources, reconnaissance faciale (upload + webcam temps réel côté client), dashboard & graphe, sécurité/RBAC/audit, indexation full-text (Elasticsearch), **chiffrement au repos (pgcrypto)** et **vérification de fuites de données (HIBP/LeakCheck)**. Au-delà du CDC, la plateforme intègre la **gestion d'enquêtes et le rapport PDF forensique (Module 14)** — le tout couvert par **270 tests** (+ 8 dédiés au chiffrement sur PostgreSQL).
+L'ensemble des exigences du cahier des charges est couvert : recherche/corrélation OSINT multi-sources, reconnaissance faciale (upload + webcam temps réel côté client), dashboard & graphe, sécurité/RBAC/audit, indexation full-text (Elasticsearch), **chiffrement au repos (pgcrypto)** et **vérification de fuites de données (HIBP/LeakCheck)**. Au-delà du CDC, la plateforme intègre la **gestion d'enquêtes et le rapport PDF forensique (Module 14)** et l'**énumération de pseudos multi-plateformes (Module 15)** — le tout couvert par **293 tests** (+ 8 dédiés au chiffrement sur PostgreSQL).
 
 ### Corrections récentes (suite aux tests manuels)
 - **Graphe global vide (422)** : la borne `limit` max des endpoints de liste (`persons`, `correlations`, `emails`, `sites`, `history`) est passée à **500** — le graphe charge `limit=200` et recevait un `422` (persons était plafonné à 100), ce qui vidait le graphe.

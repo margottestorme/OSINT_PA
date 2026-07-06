@@ -199,6 +199,7 @@ class InvestigationEntityType(str, Enum):
     site = "site"
     correlation = "correlation"
     search = "search"
+    username_search = "username_search"  # énumération de pseudo (Module 15)
 
 class InvestigationCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
@@ -256,6 +257,50 @@ class TimelineResponse(BaseModel):
     investigation_id: int
     total: int
     items: list[TimelineItem]
+
+
+# --- Énumération de pseudos (Module 15) ---
+class UsernameSearchStartResponse(BaseModel):
+    """Réponse immédiate au lancement d'une énumération persistée."""
+    search_id: int
+    username: str
+    total_platforms: int
+    status: str
+
+class UsernameSearchResponse(BaseModel):
+    id: int
+    username: str
+    user_id: int | None = None
+    total_platforms: int
+    found_count: int
+    status: str
+    created_at: datetime
+    model_config = {"from_attributes": True}
+
+class UsernameResultResponse(BaseModel):
+    id: int
+    search_id: int
+    platform: str
+    url: str
+    category: str
+    found: bool
+    response_time_ms: float | None = None
+    error: str | None = None
+    checked_at: datetime
+    model_config = {"from_attributes": True}
+
+class UsernameResultItem(BaseModel):
+    """Un résultat déjà collecté côté client (envoyé au /save pour persistance)."""
+    platform: str = Field(..., max_length=100)
+    url: str = Field(..., max_length=2000)
+    category: str = Field(..., max_length=30)
+    found: bool = False
+    response_time_ms: float | None = None
+    error: str | None = Field(default=None, max_length=100)
+
+class UsernameSaveRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=30)
+    results: list[UsernameResultItem] = Field(default_factory=list, max_length=300)
 
 
 # --- Pagination ---

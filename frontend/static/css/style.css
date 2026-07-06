@@ -579,3 +579,104 @@ pre.json {
     .kpi-grid { grid-template-columns: 1fr; }
     table { min-width: 560px; }
 }
+
+/* =========================================================
+   Module 15 — Énumération de pseudos (username.html)
+   ========================================================= */
+
+.btn-lg { padding: 12px 22px; font-size: 0.95rem; }
+
+/* Section recherche */
+.uname-search-card { text-align: center; }
+.uname-form { display: flex; gap: 12px; justify-content: center; align-items: stretch; flex-wrap: wrap; }
+.uname-input-wrap {
+    display: flex; align-items: center; gap: 10px; flex: 1; max-width: 520px;
+    background: #fff; border: 2px solid var(--border); border-radius: var(--radius);
+    padding: 0 16px; transition: border-color 0.15s, box-shadow 0.15s;
+}
+.uname-input-wrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(59,130,246,0.12); }
+.uname-input-wrap [data-lucide] { color: var(--text-muted); width: 20px; height: 20px; flex-shrink: 0; }
+.uname-input {
+    flex: 1; border: none; outline: none; background: transparent;
+    font-family: inherit; font-size: 1.05rem; color: var(--text); padding: 14px 0;
+}
+
+/* Compteurs + progression */
+.uname-stats { margin-top: 20px; }
+.uname-counters { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; margin-bottom: 12px; font-size: 0.9rem; }
+.uname-counter { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); }
+.uname-counter [data-lucide] { width: 16px; height: 16px; }
+.uname-counter b { font-size: 1.05rem; color: var(--text); }
+.uname-counter.found b { color: var(--success); }
+.uname-counter.errors b { color: var(--warning); }
+.uname-progress { height: 8px; background: #e2e8f0; border-radius: 999px; overflow: hidden; max-width: 640px; margin: 0 auto; }
+.uname-progress-bar {
+    height: 100%; width: 0%; border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent), var(--success));
+    transition: width 0.3s ease;
+}
+
+/* Barre d'outils */
+.uname-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; }
+.uname-toolbar-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.uname-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--text-muted); cursor: pointer; }
+.uname-toggle [data-lucide] { width: 15px; height: 15px; }
+.uname-sort { width: auto; padding: 6px 10px; font-size: 0.85rem; }
+.uname-filters { flex-wrap: wrap; }
+
+/* Grille de résultats — cœur visuel */
+.uname-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px; margin-bottom: 20px; align-items: start;
+}
+.uname-badge {
+    display: flex; flex-direction: column; gap: 4px;
+    border-radius: var(--radius-sm); text-decoration: none;
+    animation: unameIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+    border: 1px solid transparent;
+}
+@keyframes unameIn {
+    from { opacity: 0; transform: translateY(14px) scale(0.96); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.uname-badge .uname-name { font-weight: 600; line-height: 1.2; }
+.uname-badge .uname-cat { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.03em; opacity: 0.7; }
+.uname-badge [data-lucide] { width: 15px; height: 15px; flex-shrink: 0; }
+.uname-badge .uname-head { display: flex; align-items: center; gap: 6px; }
+
+/* TROUVÉ : dominant (grand, coloré, cliquable) */
+.uname-badge.found {
+    background: #ecfdf5; border-color: #6ee7b7; color: #065f46;
+    padding: 14px 14px; box-shadow: 0 2px 8px rgba(16,185,129,0.15);
+}
+.uname-badge.found .uname-name { font-size: 0.98rem; }
+.uname-badge.found:hover { border-color: var(--success); box-shadow: 0 6px 16px rgba(16,185,129,0.25); transform: translateY(-2px); transition: all 0.15s; }
+.uname-badge.found [data-lucide] { color: var(--success); }
+
+/* NON TROUVÉ : discret (petit, gris) */
+.uname-badge.notfound {
+    background: #f8fafc; border-color: #e2e8f0; color: #94a3b8;
+    padding: 8px 12px; opacity: 0.75;
+}
+.uname-badge.notfound .uname-name { font-size: 0.8rem; font-weight: 500; }
+.uname-badge.notfound .uname-cat { display: none; }
+.uname-badge.notfound [data-lucide] { color: #cbd5e1; width: 13px; height: 13px; }
+
+/* ERREUR : orange */
+.uname-badge.errored {
+    background: #fffbeb; border-color: #fde68a; color: #b45309;
+    padding: 8px 12px; opacity: 0.85;
+}
+.uname-badge.errored .uname-name { font-size: 0.8rem; }
+.uname-badge.errored .uname-cat { display: none; }
+.uname-badge.errored [data-lucide] { color: var(--warning); width: 13px; height: 13px; }
+
+/* Masquage par filtre (catégorie / uniquement trouvés) */
+.uname-badge.filtered { display: none; }
+
+/* Résumé final */
+.uname-summary-icon {
+    width: 48px; height: 48px; border-radius: 12px; display: grid; place-items: center;
+    background: #ecfdf5; color: var(--success);
+}
+.uname-summary-icon [data-lucide] { width: 26px; height: 26px; }

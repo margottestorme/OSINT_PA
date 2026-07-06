@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OSINT Platform — Username</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+<div class="app-shell">
+
+    <aside class="sidebar">
+        <div class="brand">
+            <span class="logo"><i data-lucide="radar"></i></span>
+            OSINT Platform
+        </div>
+        <nav>
+            <a class="nav-link" href="/dashboard"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+            <a class="nav-link" href="/dashboard#persons-section"><i data-lucide="users"></i> Personnes</a>
+            <a class="nav-link" href="/dashboard#history-section"><i data-lucide="history"></i> Historique</a>
+            <a class="nav-link" href="/graph"><i data-lucide="share-2"></i> Graphe</a>
+            <a class="nav-link" href="/investigations"><i data-lucide="folder-open"></i> Enquêtes</a>
+            <a class="nav-link active" href="/username"><i data-lucide="at-sign"></i> Username</a>
+            <a class="nav-link" href="/stream"><i data-lucide="video"></i> Stream Webcam</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="user-chip">
+                <span class="avatar" id="user-avatar">AD</span>
+                <span id="user-info">admin</span>
+            </div>
+            <button id="logout-btn" class="btn btn-ghost btn-sm" style="width:100%; color:var(--text-on-dark); border-color:var(--border-dark);">
+                <i data-lucide="log-out"></i> Deconnexion
+            </button>
+        </div>
+    </aside>
+
+    <div class="main">
+        <div class="topbar">
+            <div>
+                <h1>Énumération de pseudos</h1>
+                <div class="subtitle">Présence d'un username sur 100+ plateformes</div>
+            </div>
+            <div class="topbar-right">
+                <form class="global-search" role="search">
+                    <input type="search" class="global-search-input" placeholder="Recherche globale..."
+                           aria-label="Recherche globale" autocomplete="off">
+                    <button type="submit" class="global-search-btn" aria-label="Rechercher"><i data-lucide="search"></i></button>
+                </form>
+            </div>
+        </div>
+
+        <div class="content">
+
+            <!-- SECTION RECHERCHE -->
+            <div class="card uname-search-card">
+                <form id="uname-form" class="uname-form">
+                    <div class="uname-input-wrap">
+                        <i data-lucide="at-sign"></i>
+                        <input type="text" id="uname-input" class="uname-input"
+                               placeholder="Entrez un username..." autocomplete="off"
+                               maxlength="30" spellcheck="false">
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-lg" id="uname-submit">
+                        <i data-lucide="radar"></i> <span>Rechercher</span>
+                    </button>
+                </form>
+                <div id="uname-error" class="alert alert-error hidden" role="alert" style="margin-top:14px;"></div>
+
+                <!-- Compteurs + progression -->
+                <div id="uname-stats" class="uname-stats hidden">
+                    <div class="uname-counters">
+                        <span class="uname-counter found"><i data-lucide="check-circle"></i> <b id="uname-found">0</b> trouvés</span>
+                        <span class="uname-counter checked"><i data-lucide="search"></i> <b id="uname-checked">0</b> vérifiés</span>
+                        <span class="uname-counter total"><i data-lucide="layers"></i> <b id="uname-total">0</b> plateformes</span>
+                        <span class="uname-counter errors hidden"><i data-lucide="alert-triangle"></i> <b id="uname-errors">0</b> erreurs</span>
+                    </div>
+                    <div class="uname-progress"><div class="uname-progress-bar" id="uname-progress-bar"></div></div>
+                </div>
+            </div>
+
+            <!-- BARRE D'OUTILS (filtres, tri, son) -->
+            <div class="card uname-toolbar-card hidden" id="uname-toolbar">
+                <div class="uname-toolbar">
+                    <div class="tabs uname-filters" id="uname-filters" style="margin:0; border:none;">
+                        <button class="tab active" data-cat="">Tout</button>
+                        <!-- catégories injectées dynamiquement -->
+                    </div>
+                    <div class="uname-toolbar-right">
+                        <label class="uname-toggle">
+                            <input type="checkbox" id="uname-only-found"> Uniquement les trouvés
+                        </label>
+                        <select class="input uname-sort" id="uname-sort" aria-label="Tri">
+                            <option value="response">Ordre de réponse</option>
+                            <option value="alpha">Alphabétique</option>
+                            <option value="category">Par catégorie</option>
+                        </select>
+                        <label class="uname-toggle">
+                            <input type="checkbox" id="uname-sound"> <i data-lucide="volume-2"></i> Son
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- GRILLE DE RÉSULTATS (cœur visuel) -->
+            <div id="uname-grid" class="uname-grid"></div>
+
+            <!-- RÉSUMÉ FINAL -->
+            <div class="card uname-summary hidden" id="uname-summary">
+                <div class="flex between items-center" style="flex-wrap:wrap; gap:16px;">
+                    <div class="flex gap-12 items-center">
+                        <div class="uname-summary-icon"><i data-lucide="user-check"></i></div>
+                        <div>
+                            <div style="font-size:1.2rem; font-weight:700;" id="uname-summary-title">—</div>
+                            <div class="text-muted" id="uname-summary-sub">—</div>
+                        </div>
+                    </div>
+                    <div class="flex gap-8" style="flex-wrap:wrap;">
+                        <button class="btn btn-primary btn-sm" id="uname-add-inv"><i data-lucide="folder-plus"></i> Ajouter à une enquête</button>
+                        <button class="btn btn-ghost btn-sm" id="uname-export"><i data-lucide="download"></i> Exporter JSON</button>
+                        <button class="btn btn-ghost btn-sm" id="uname-copy"><i data-lucide="copy"></i> Copier les URLs trouvées</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- État initial -->
+            <div id="uname-empty" class="empty-state">
+                <div class="empty-icon"><i data-lucide="at-sign"></i></div>
+                <h3>Recherchez un pseudo</h3>
+                <p>Saisissez un username pour tester sa présence sur plus de 150 plateformes en temps réel.</p>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<!-- Modal partagé : ajouter à une enquête (Module 14) -->
+<div class="modal-overlay hidden" id="add-inv-modal">
+    <div class="modal">
+        <h3><i data-lucide="folder-plus"></i> Ajouter à une enquête</h3>
+        <p class="text-muted" id="add-inv-target" style="font-size:0.85rem; margin-bottom:14px;">—</p>
+        <div class="field"><label for="add-inv-select">Enquête ouverte</label>
+            <select class="input" id="add-inv-select"></select></div>
+        <div class="field"><label for="add-inv-notes">Note (optionnelle)</label>
+            <textarea class="input" id="add-inv-notes" rows="2" maxlength="5000" placeholder="Pourquoi cette entité est pertinente..."></textarea></div>
+        <div id="add-inv-error" class="alert alert-error hidden" role="alert"></div>
+        <div class="modal-actions">
+            <button class="btn btn-ghost" id="add-inv-cancel">Annuler</button>
+            <button class="btn btn-primary" id="add-inv-save"><i data-lucide="check"></i> Ajouter</button>
+        </div>
+    </div>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/app.js"></script>
+<script>lucide.createIcons();</script>
+</body>
+</html>

@@ -197,6 +197,17 @@ const API = (() => {
         return _request("GET", "/api/investigations/" + id + "/timeline");
     }
 
+    // --- Énumération de pseudos (Module 15) ---
+    async function getUsernamePlatforms() {
+        return _request("GET", "/api/username/platforms");
+    }
+    // Persiste des résultats déjà collectés (issus du stream) sans re-énumérer.
+    async function saveUsernameSearch(username, results) {
+        return _request("POST", "/api/username/save", { json: { username, results } });
+    }
+    // Le stream SSE est consommé directement via fetch+ReadableStream côté page
+    // (EventSource ne peut pas porter le header Authorization), en réutilisant getToken().
+
     // Export PDF : réponse binaire → on récupère un Blob (pas du JSON) + le nom de fichier
     async function exportInvestigationPdf(id) {
         let resp;
@@ -254,5 +265,7 @@ const API = (() => {
         removeInvestigationEntity,
         getInvestigationTimeline,
         exportInvestigationPdf,
+        getUsernamePlatforms,
+        saveUsernameSearch,
     };
 })();

@@ -14,6 +14,7 @@ from app.api.routes import router
 from app.api.face_routes import face_router
 from app.api.stream_routes import stream_router
 from app.api.investigation_routes import investigation_router
+from app.api.username_routes import username_router
 from app.api.middleware import (
     GlobalRateLimitMiddleware,
     RequestLoggingMiddleware,
@@ -72,6 +73,7 @@ app.include_router(router)
 app.include_router(face_router)
 app.include_router(stream_router)
 app.include_router(investigation_router)
+app.include_router(username_router)
 
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR / "static")), name="static")
 
@@ -121,6 +123,11 @@ async def investigations_page():
 @app.get("/investigation_detail", response_class=HTMLResponse, include_in_schema=False)
 async def investigation_detail_page():
     return (FRONTEND_DIR / "investigation_detail.html").read_text(encoding="utf-8")
+
+
+@app.get("/username", response_class=HTMLResponse, include_in_schema=False)
+async def username_page():
+    return (FRONTEND_DIR / "username.html").read_text(encoding="utf-8")
 
 
 @app.get("/stream", response_class=HTMLResponse, include_in_schema=False)

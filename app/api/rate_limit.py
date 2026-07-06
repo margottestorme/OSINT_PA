@@ -65,3 +65,10 @@ stream_rate_limiter = APIRateLimiter(
     window_seconds=1,
     detail="Trop de frames — l'analyse est limitée à 2 par seconde",
 )
+
+# Énumération de pseudos (Module 15) : 1 recherche / 30s par utilisateur (coûteux : 157 requêtes).
+username_rate_limiter = APIRateLimiter(
+    max_requests=1,
+    window_seconds=30,
+    detail="Une seule énumération de pseudo toutes les 30 secondes",
+)

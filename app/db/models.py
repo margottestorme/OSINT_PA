@@ -217,6 +217,44 @@ class InvestigationEntity(Base):
     )
 
 
+class UsernameSearch(Base):
+    """Recherche d'énumération de pseudo multi-plateformes (Module 15)."""
+    __tablename__ = "username_searches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(30), index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    total_platforms: Mapped[int] = mapped_column(Integer, default=0)
+    found_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="running")  # running / completed
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    results: Mapped[list["UsernameResult"]] = relationship(
+        back_populates="search", cascade="all, delete-orphan"
+    )
+
+
+class UsernameResult(Base):
+    """Résultat d'une vérification sur une plateforme (Module 15)."""
+    __tablename__ = "username_results"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    search_id: Mapped[int] = mapped_column(ForeignKey("username_searches.id"), index=True)
+    platform: Mapped[str] = mapped_column(String(100))
+    url: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(30))
+    found: Mapped[bool] = mapped_column(Boolean, default=False)
+    response_time_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    error: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    checked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    search: Mapped["UsernameSearch"] = relationship(back_populates="results")
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 

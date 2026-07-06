@@ -22,6 +22,7 @@
             <a class="nav-link active" href="/dashboard#persons-section"><i data-lucide="users"></i> Personnes</a>
             <a class="nav-link" href="/graph"><i data-lucide="share-2"></i> Graphe</a>
             <a class="nav-link" href="/investigations"><i data-lucide="folder-open"></i> Enquêtes</a>
+            <a class="nav-link" href="/username"><i data-lucide="at-sign"></i> Username</a>
             <a class="nav-link" href="/stream"><i data-lucide="video"></i> Stream Webcam</a>
         </nav>
         <div class="sidebar-footer">
@@ -72,7 +73,10 @@
                                 </div>
                             </div>
                         </div>
-                        <button class="btn btn-ghost btn-sm" id="person-edit"><i data-lucide="edit-3"></i> Editer</button>
+                        <div class="flex gap-8">
+                            <button class="btn btn-ghost btn-sm" id="person-usernames"><i data-lucide="at-sign"></i> Rechercher ses pseudos</button>
+                            <button class="btn btn-ghost btn-sm" id="person-edit"><i data-lucide="edit-3"></i> Editer</button>
+                        </div>
                     </div>
                     <div id="person-notes" class="alert hidden" style="background:#fffbeb; border:1px solid #fde68a; color:#92400e; margin-top:16px; margin-bottom:0;"></div>
                 </div>

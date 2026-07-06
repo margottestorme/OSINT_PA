@@ -23,6 +23,7 @@ from app.db.models import (
     Person,
     SearchHistory,
     Site,
+    UsernameSearch,
 )
 from app.schemas.schemas import (
     InvestigationCreate,
@@ -219,6 +220,7 @@ async def add_entity(
         "site": Site,
         "correlation": Correlation,
         "search": SearchHistory,
+        "username_search": UsernameSearch,
     }[body.entity_type.value]
     target = await db.get(model, body.entity_id)
     if not target:
@@ -378,6 +380,8 @@ async def get_timeline(
                    lambda c: f"Corrélation #{c.id} (score {c.score:.2f})")
     await _resolve("search", SearchHistory, "created_at",
                    lambda h: f"{h.query} ({h.query_type})")
+    await _resolve("username_search", UsernameSearch, "created_at",
+                   lambda u: f"@{u.username} ({u.found_count}/{u.total_platforms} trouvés)")
 
     items: list[TimelineItem] = []
     for link in links:

@@ -89,6 +89,7 @@ class ReportData:
     sites: list[dict] = field(default_factory=list)
     correlations: list[dict] = field(default_factory=list)
     searches: list[dict] = field(default_factory=list)
+    username_searches: list[dict] = field(default_factory=list)
 
     period_start: datetime | None = None
     period_end: datetime | None = None
@@ -99,7 +100,8 @@ class ReportData:
     @property
     def entity_total(self) -> int:
         return (len(self.persons) + len(self.emails) + len(self.sites)
-                + len(self.correlations) + len(self.searches))
+                + len(self.correlations) + len(self.searches)
+                + len(self.username_searches))
 
 
 async def collect_report_data(db: AsyncSession, investigation_id: int) -> ReportData:
@@ -134,11 +136,13 @@ async def collect_report_data(db: AsyncSession, investigation_id: int) -> Report
             return []
         return list((await db.execute(select(model).where(model.id.in_(ids)))).scalars().all())
 
+    from app.db.models import UsernameSearch
     persons = await _fetch(Person, ids_by_type.get("person", []))
     emails = await _fetch(Email, ids_by_type.get("email", []))
     sites = await _fetch(Site, ids_by_type.get("site", []))
     correlations = await _fetch(Correlation, ids_by_type.get("correlation", []))
     searches = await _fetch(SearchHistory, ids_by_type.get("search", []))
+    username_searches = await _fetch(UsernameSearch, ids_by_type.get("username_search", []))
 
     persons_d = [{
         "id": p.id, "name": f"{p.first_name} {p.last_name}".strip(),
@@ -166,6 +170,11 @@ async def collect_report_data(db: AsyncSession, investigation_id: int) -> Report
         "result_count": h.result_count, "created_at": h.created_at,
         "notes": notes_by_key.get(("search", h.id)),
     } for h in searches]
+    username_searches_d = [{
+        "id": u.id, "username": u.username, "found_count": u.found_count,
+        "total_platforms": u.total_platforms, "status": u.status, "created_at": u.created_at,
+        "notes": notes_by_key.get(("username_search", u.id)),
+    } for u in username_searches]
 
     # Période couverte : min/max des dates de découverte réelles des entités
     all_dates = (
@@ -174,6 +183,7 @@ async def collect_report_data(db: AsyncSession, investigation_id: int) -> Report
         + [s["discovered_at"] for s in sites_d]
         + [c["created_at"] for c in correlations_d]
         + [h["created_at"] for h in searches_d]
+        + [u["created_at"] for u in username_searches_d]
     )
     all_dates = [d for d in all_dates if d is not None]
     period_start = min(all_dates) if all_dates else None
@@ -208,6 +218,7 @@ async def collect_report_data(db: AsyncSession, investigation_id: int) -> Report
         sites=sites_d,
         correlations=correlations_d,
         searches=searches_d,
+        username_searches=username_searches_d,
         period_start=period_start,
         period_end=period_end,
         audit_chain=audit_chain,
@@ -238,6 +249,7 @@ def compute_content_hash(data: ReportData) -> str:
         "sites": data.sites,
         "correlations": data.correlations,
         "searches": data.searches,
+        "username_searches": data.username_searches,
         "audit_chain": [{**a, "created_at": _iso(a["created_at"])} for a in data.audit_chain],
     }
     canonical = json.dumps(payload, sort_keys=True, default=_iso, ensure_ascii=False)
@@ -416,6 +428,7 @@ def _executive_summary(data, st):
         ["Sites", str(len(data.sites))],
         ["Corrélations", str(len(data.correlations))],
         ["Recherches OSINT", str(len(data.searches))],
+        ["Recherches de pseudos", str(len(data.username_searches))],
         ["Total d'entités", str(data.entity_total)],
     ]
     story.append(_data_table(["Type d'entité", "Nombre"], stats_rows,
@@ -481,6 +494,13 @@ def _entities_sections(data, st):
         [[h["id"], h["query"], h["query_type"], h["result_count"], _iso(h["created_at"])]
          for h in data.searches],
         [1.2 * cm, 5.5 * cm, 2.3 * cm, 2 * cm, 4.5 * cm],
+    )
+    story += _section(
+        f"Recherches de pseudos ({len(data.username_searches)})",
+        ["ID", "Pseudo", "Trouvés", "Plateformes", "Date (UTC)"],
+        [[u["id"], u["username"], u["found_count"], u["total_platforms"], _iso(u["created_at"])]
+         for u in data.username_searches],
+        [1.2 * cm, 5.5 * cm, 2.3 * cm, 2.5 * cm, 4 * cm],
     )
     return story
 
