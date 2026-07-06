@@ -162,6 +162,61 @@ class SearchResult(Base):
     search: Mapped["SearchHistory"] = relationship(back_populates="results")
 
 
+class Investigation(Base):
+    """Dossier d'enquête OSINT regroupant des entités traçables (Module 14).
+
+    Transforme la plateforme d'un ensemble d'outils en plateforme d'investigation :
+    chaque enquête agrège personnes, emails, sites, corrélations et recherches, et
+    peut être exportée en rapport PDF forensique opposable.
+    """
+    __tablename__ = "investigations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="open")  # open / closed / archived
+    analyst_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    entities: Mapped[list["InvestigationEntity"]] = relationship(
+        back_populates="investigation", cascade="all, delete-orphan"
+    )
+
+
+class InvestigationEntity(Base):
+    """Rattachement d'une entité (personne/email/site/corrélation/recherche) à une enquête.
+
+    Table de liaison polymorphe : `entity_type` + `entity_id` référencent une ligne d'une
+    des tables métier, sans FK dure (les entités peuvent vivre hors d'une enquête).
+    """
+    __tablename__ = "investigation_entities"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    investigation_id: Mapped[int] = mapped_column(
+        ForeignKey("investigations.id"), index=True
+    )
+    entity_type: Mapped[str] = mapped_column(String(20))  # person / email / site / correlation / search
+    entity_id: Mapped[int] = mapped_column(Integer)
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    added_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    investigation: Mapped["Investigation"] = relationship(back_populates="entities")
+
+    __table_args__ = (
+        Index("ix_investigation_entities_type_id", "entity_type", "entity_id"),
+    )
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 

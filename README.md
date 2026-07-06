@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)
-![Tests](https://img.shields.io/badge/tests-243%20passed%20%2B8%20PG-brightgreen)
+![Tests](https://img.shields.io/badge/tests-270%20passed%20%2B8%20PG-brightgreen)
 ![License](https://img.shields.io/badge/licence-usage%20acad%C3%A9mique-orange)
 
 Plateforme OSINT (Open Source Intelligence) académique développée dans le cadre du **projet annuel ESGI** en cybersécurité (4e année). Elle permet la recherche, l'extraction et la corrélation d'entités à partir de sources publiques et légales, la reconnaissance faciale sur images statiques, et l'enrichissement automatique croisé entre les deux modules.
@@ -364,8 +364,43 @@ Enveloppe `OsintResult` normalisée :
 }
 ```
 
-### ✅ CDC 100 % implémenté
-L'ensemble des exigences du cahier des charges est couvert : recherche/corrélation OSINT multi-sources, reconnaissance faciale (upload + webcam temps réel côté client), dashboard & graphe, sécurité/RBAC/audit, indexation full-text (Elasticsearch), **chiffrement au repos (pgcrypto)** et **vérification de fuites de données (HIBP/LeakCheck)** — le tout couvert par **243 tests** (+ 8 dédiés au chiffrement sur PostgreSQL).
+### Module 14 — Gestion d'enquêtes & Rapport PDF forensique
+Passage d'un **ensemble d'outils** à une **plateforme d'investigation** : les entités (personnes, emails, sites, corrélations, recherches) se regroupent désormais dans des **dossiers d'enquête traçables**, exportables en **rapport PDF forensique opposable** (*chain of custody*).
+
+**Modèle `Investigation`** (2 tables, migration `a1b2c3d4e5f6`)
+- `investigations` : titre, description, **statut** (`open` / `closed` / `archived`), analyste responsable (FK `users`), `created_at` / `updated_at` (màj automatique).
+- `investigation_entities` : **table de liaison polymorphe** (`entity_type` + `entity_id`) rattachant n'importe quelle entité métier à une enquête, avec note et auteur du rattachement. Index composite `(entity_type, entity_id)`.
+
+**API CRUD complète** ([investigation_routes.py](osint-platform/app/api/investigation_routes.py)) — chaque action mutante est **journalisée dans l'audit** :
+
+| Endpoint | RBAC | Rôle |
+|----------|------|------|
+| `POST /api/investigations` | admin / analyst | Crée une enquête (201) |
+| `GET /api/investigations` | authentifié | Liste paginée + `entity_count`, filtre `?status=` |
+| `GET /api/investigations/{id}` | authentifié | Détail + entités rattachées |
+| `PATCH /api/investigations/{id}` | admin / analyst | Modifie titre / description / statut |
+| `DELETE /api/investigations/{id}` | **admin** | **Soft delete** → statut `archived` |
+| `POST /api/investigations/{id}/entities` | admin / analyst | Rattache une entité (vérifie son existence → 404 sinon) |
+| `DELETE /api/investigations/{id}/entities/{link_id}` | admin / analyst | Retire un rattachement |
+| `GET /api/investigations/{id}/timeline` | authentifié | **Chronologie forensique** triée par date de découverte réelle de chaque entité |
+| `GET /api/investigations/{id}/export/pdf` | authentifié | **Export PDF forensique** |
+
+**Export PDF forensique** ([pdf_generator.py](osint-platform/app/reports/pdf_generator.py), **reportlab**)
+- **Généré intégralement en mémoire** (`BytesIO`) — **jamais écrit sur disque** (même exigence que le module facial).
+- **4 pages** : (1) en-tête forensique avec numéro de rapport (UUID) et classification **CONFIDENTIEL**, (2) résumé exécutif (statistiques, période couverte), (3) entités par type (personnes/emails/sites/corrélations/recherches), (4) **page d'intégrité**.
+- **Empreinte SHA256** calculée sur la sérialisation canonique du contenu **avant** la signature — imprimée sur la page d'intégrité et exposée en en-tête `X-Content-SHA256`. Déterministe → **tamper-evident** : toute altération des données invaliderait l'empreinte.
+- **Chaîne d'audit** de l'enquête reproduite dans le rapport (toutes les actions loggées, horodatées UTC ISO 8601) → **chain of custody** de bout en bout.
+- Design sobre (Helvetica, bleu marine `#1a1f2e`), en-tête / pied de page et **numérotation sur chaque page**.
+
+**Interface** ([investigations.html](osint-platform/frontend/investigations.html) + [investigation_detail.html](osint-platform/frontend/investigation_detail.html))
+- Liste des enquêtes en cartes avec **statut coloré** (ouverte = vert, fermée = gris, archivée = rouge), filtre par statut, modal de création.
+- Page de détail : header (statut, analyste, dates), bouton **« Exporter PDF »** (téléchargement direct via Blob, sans changer de page), onglet **Entités** (nom/email/url résolus, retrait) et onglet **Timeline** (chronologie visuelle réutilisant le style de l'onglet Activité).
+- Entrée **« Enquêtes »** (icône `folder-open`) ajoutée à la sidebar de toutes les pages.
+
+**Boutons « Ajouter à une enquête »** — modal partagé et réutilisable (liste déroulante des enquêtes ouvertes + note), disponible sur le **dashboard** (chaque personne, chaque recherche de l'historique) et la **page rapport** (chaque email, chaque site). Toast de confirmation « Ajouté à l'enquête X ».
+
+### ✅ CDC 100 % implémenté (+ extensions)
+L'ensemble des exigences du cahier des charges est couvert : recherche/corrélation OSINT multi-sources, reconnaissance faciale (upload + webcam temps réel côté client), dashboard & graphe, sécurité/RBAC/audit, indexation full-text (Elasticsearch), **chiffrement au repos (pgcrypto)** et **vérification de fuites de données (HIBP/LeakCheck)**. Au-delà du CDC, la plateforme intègre la **gestion d'enquêtes et le rapport PDF forensique (Module 14)** — le tout couvert par **270 tests** (+ 8 dédiés au chiffrement sur PostgreSQL).
 
 ### Corrections récentes (suite aux tests manuels)
 - **Graphe global vide (422)** : la borne `limit` max des endpoints de liste (`persons`, `correlations`, `emails`, `sites`, `history`) est passée à **500** — le graphe charge `limit=200` et recevait un `422` (persons était plafonné à 100), ce qui vidait le graphe.
@@ -697,6 +732,7 @@ TEST_DATABASE_URL=postgresql+asyncpg://osint_user:<password>@localhost:5432/osin
 | Logging | loguru | Logs structurés |
 | Cache | Redis 7 | Tâches async (futur) |
 | Indexation full-text | Elasticsearch 8.x | Recherche multi-critères rapide (optionnel) |
+| Rapports PDF | reportlab | Export forensique en mémoire (Module 14) |
 | Conteneurs | Docker Compose | Déploiement |
 
 ## Mentions légales et avertissements

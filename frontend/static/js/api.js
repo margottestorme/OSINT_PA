@@ -161,6 +161,65 @@ const API = (() => {
         return _request("PATCH", "/api/persons/" + personId, { json: body });
     }
 
+    // --- Enquêtes (Module 14) ---
+    async function listInvestigations(status = "") {
+        const params = new URLSearchParams();
+        if (status) params.set("status", status);
+        const qs = params.toString();
+        return _request("GET", "/api/investigations" + (qs ? "?" + qs : ""));
+    }
+
+    async function getInvestigation(id) {
+        return _request("GET", "/api/investigations/" + id);
+    }
+
+    async function createInvestigation(body) {
+        return _request("POST", "/api/investigations", { json: body });
+    }
+
+    async function updateInvestigation(id, body) {
+        return _request("PATCH", "/api/investigations/" + id, { json: body });
+    }
+
+    async function deleteInvestigation(id) {
+        return _request("DELETE", "/api/investigations/" + id);
+    }
+
+    async function addInvestigationEntity(id, body) {
+        return _request("POST", "/api/investigations/" + id + "/entities", { json: body });
+    }
+
+    async function removeInvestigationEntity(id, linkId) {
+        return _request("DELETE", "/api/investigations/" + id + "/entities/" + linkId);
+    }
+
+    async function getInvestigationTimeline(id) {
+        return _request("GET", "/api/investigations/" + id + "/timeline");
+    }
+
+    // Export PDF : réponse binaire → on récupère un Blob (pas du JSON) + le nom de fichier
+    async function exportInvestigationPdf(id) {
+        let resp;
+        try {
+            resp = await fetch("/api/investigations/" + id + "/export/pdf", { headers: _headers() });
+        } catch {
+            throw new Error("Impossible de contacter le serveur");
+        }
+        if (resp.status === 401 || resp.status === 403) {
+            clearToken();
+            window.location.href = "/";
+            throw new Error("Session expirée");
+        }
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            throw new Error(data.detail || "Erreur serveur (" + resp.status + ")");
+        }
+        const blob = await resp.blob();
+        const cd = resp.headers.get("Content-Disposition") || "";
+        const m = cd.match(/filename="?([^"]+)"?/);
+        return { blob, filename: m ? m[1] : "rapport_enquete_" + id + ".pdf" };
+    }
+
     return {
         setToken,
         getToken,
@@ -186,5 +245,14 @@ const API = (() => {
         streamAnalyze,
         getStats,
         updatePerson,
+        listInvestigations,
+        getInvestigation,
+        createInvestigation,
+        updateInvestigation,
+        deleteInvestigation,
+        addInvestigationEntity,
+        removeInvestigationEntity,
+        getInvestigationTimeline,
+        exportInvestigationPdf,
     };
 })();

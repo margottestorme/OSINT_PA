@@ -13,6 +13,7 @@ from app.search.elastic import elastic
 from app.api.routes import router
 from app.api.face_routes import face_router
 from app.api.stream_routes import stream_router
+from app.api.investigation_routes import investigation_router
 from app.api.middleware import (
     GlobalRateLimitMiddleware,
     RequestLoggingMiddleware,
@@ -70,6 +71,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.include_router(router)
 app.include_router(face_router)
 app.include_router(stream_router)
+app.include_router(investigation_router)
 
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR / "static")), name="static")
 
@@ -109,6 +111,16 @@ async def search_page():
 @app.get("/graph", response_class=HTMLResponse, include_in_schema=False)
 async def graph_page():
     return (FRONTEND_DIR / "graph.html").read_text(encoding="utf-8")
+
+
+@app.get("/investigations", response_class=HTMLResponse, include_in_schema=False)
+async def investigations_page():
+    return (FRONTEND_DIR / "investigations.html").read_text(encoding="utf-8")
+
+
+@app.get("/investigation_detail", response_class=HTMLResponse, include_in_schema=False)
+async def investigation_detail_page():
+    return (FRONTEND_DIR / "investigation_detail.html").read_text(encoding="utf-8")
 
 
 @app.get("/stream", response_class=HTMLResponse, include_in_schema=False)

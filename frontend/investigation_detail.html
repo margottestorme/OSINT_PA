@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OSINT Platform — Enquête</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+<div class="app-shell">
+
+    <aside class="sidebar">
+        <div class="brand">
+            <span class="logo"><i data-lucide="radar"></i></span>
+            OSINT Platform
+        </div>
+        <nav>
+            <a class="nav-link" href="/dashboard"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+            <a class="nav-link" href="/dashboard#persons-section"><i data-lucide="users"></i> Personnes</a>
+            <a class="nav-link" href="/dashboard#history-section"><i data-lucide="history"></i> Historique</a>
+            <a class="nav-link" href="/graph"><i data-lucide="share-2"></i> Graphe</a>
+            <a class="nav-link active" href="/investigations"><i data-lucide="folder-open"></i> Enquêtes</a>
+            <a class="nav-link" href="/stream"><i data-lucide="video"></i> Stream Webcam</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="user-chip">
+                <span class="avatar" id="user-avatar">AD</span>
+                <span id="user-info">admin</span>
+            </div>
+            <button id="logout-btn" class="btn btn-ghost btn-sm" style="width:100%; color:var(--text-on-dark); border-color:var(--border-dark);">
+                <i data-lucide="log-out"></i> Deconnexion
+            </button>
+        </div>
+    </aside>
+
+    <div class="main">
+        <div class="topbar">
+            <div>
+                <h1>Enquête</h1>
+                <div class="subtitle">Détail et rapport forensique</div>
+            </div>
+            <div class="topbar-right">
+                <form class="global-search" role="search">
+                    <input type="search" class="global-search-input" placeholder="Recherche globale..."
+                           aria-label="Recherche globale" autocomplete="off">
+                    <button type="submit" class="global-search-btn" aria-label="Rechercher"><i data-lucide="search"></i></button>
+                </form>
+                <a class="btn btn-ghost btn-sm" href="/investigations"><i data-lucide="arrow-left"></i> Enquêtes</a>
+                <button class="btn btn-primary btn-sm" id="export-pdf-btn" disabled><i data-lucide="file-text"></i> Exporter PDF</button>
+            </div>
+        </div>
+
+        <div class="content">
+            <div id="investigation-error" class="alert alert-error hidden" role="alert" aria-live="assertive"></div>
+            <div id="investigation-loading" class="loading"><span class="spinner dark"></span> Chargement de l'enquête...</div>
+
+            <div id="investigation-detail" class="hidden">
+
+                <!-- Header enquête -->
+                <div class="card">
+                    <div class="flex between items-center" style="flex-wrap:wrap; gap:16px;">
+                        <div>
+                            <div class="flex gap-8 items-center" style="flex-wrap:wrap;">
+                                <span style="font-size:1.3rem; font-weight:700;" id="inv-title">—</span>
+                                <span class="status-badge" id="inv-status">—</span>
+                            </div>
+                            <div class="flex gap-12 items-center text-muted" style="margin-top:8px; font-size:0.85rem; flex-wrap:wrap;">
+                                <span class="mono" id="inv-id">—</span>
+                                <span id="inv-analyst"><i data-lucide="user"></i> —</span>
+                                <span id="inv-created"><i data-lucide="calendar"></i> —</span>
+                                <span id="inv-updated"><i data-lucide="refresh-cw"></i> —</span>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary btn-sm" id="add-entity-btn"><i data-lucide="plus"></i> Ajouter entité</button>
+                    </div>
+                    <div id="inv-description" class="alert hidden" style="background:var(--content-bg); border:1px solid var(--border); color:var(--text); margin-top:16px; margin-bottom:0;"></div>
+                </div>
+
+                <!-- Onglets -->
+                <div class="card">
+                    <div class="tabs" id="inv-tabs">
+                        <button class="tab active" data-tab="entities"><i data-lucide="layers"></i> Entités <span class="tab-count" id="count-entities">0</span></button>
+                        <button class="tab" data-tab="timeline"><i data-lucide="activity"></i> Timeline</button>
+                    </div>
+
+                    <div class="tab-panel active" id="panel-entities">
+                        <div class="table-wrap"><table>
+                            <thead><tr><th>Type</th><th>Entité</th><th>Note</th><th>Rattachée le</th><th></th></tr></thead>
+                            <tbody id="entities-body"></tbody>
+                        </table></div>
+                        <div id="entities-empty" class="empty-state hidden">
+                            <div class="empty-icon"><i data-lucide="layers"></i></div>
+                            <h3>Aucune entité rattachée</h3>
+                            <p>Ajoutez des personnes, emails, sites, corrélations ou recherches à cette enquête.</p>
+                        </div>
+                    </div>
+
+                    <div class="tab-panel" id="panel-timeline">
+                        <div class="timeline" id="inv-timeline"></div>
+                        <div id="timeline-empty" class="empty-state hidden">
+                            <div class="empty-icon"><i data-lucide="activity"></i></div>
+                            <h3>Chronologie vide</h3>
+                            <p>La timeline se remplit à mesure que des entités sont rattachées.</p>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal ajout entité -->
+<div class="modal-overlay hidden" id="add-entity-modal">
+    <div class="modal">
+        <h3><i data-lucide="plus"></i> Ajouter une entité</h3>
+        <div class="field"><label for="entity-type">Type d'entité</label>
+            <select class="input" id="entity-type">
+                <option value="person">Personne</option>
+                <option value="email">Email</option>
+                <option value="site">Site</option>
+                <option value="correlation">Corrélation</option>
+                <option value="search">Recherche OSINT</option>
+            </select>
+        </div>
+        <div class="field"><label for="entity-id">Identifiant de l'entité</label>
+            <input class="input" type="number" id="entity-id" min="1" placeholder="ex. 42"></div>
+        <div class="field"><label for="entity-notes">Note (optionnelle)</label>
+            <textarea class="input" id="entity-notes" rows="2" maxlength="5000" placeholder="Pourquoi cette entité est pertinente..."></textarea></div>
+        <div id="add-entity-error" class="alert alert-error hidden" role="alert"></div>
+        <div class="modal-actions">
+            <button class="btn btn-ghost" id="add-entity-cancel">Annuler</button>
+            <button class="btn btn-primary" id="add-entity-save"><i data-lucide="check"></i> Rattacher</button>
+        </div>
+    </div>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/app.js"></script>
+<script>lucide.createIcons();</script>
+</body>
+</html>

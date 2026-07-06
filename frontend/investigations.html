@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OSINT Platform — Enquêtes</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+<div class="app-shell">
+
+    <aside class="sidebar">
+        <div class="brand">
+            <span class="logo"><i data-lucide="radar"></i></span>
+            OSINT Platform
+        </div>
+        <nav>
+            <a class="nav-link" href="/dashboard"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+            <a class="nav-link" href="/dashboard#persons-section"><i data-lucide="users"></i> Personnes</a>
+            <a class="nav-link" href="/dashboard#history-section"><i data-lucide="history"></i> Historique</a>
+            <a class="nav-link" href="/graph"><i data-lucide="share-2"></i> Graphe</a>
+            <a class="nav-link active" href="/investigations"><i data-lucide="folder-open"></i> Enquêtes</a>
+            <a class="nav-link" href="/stream"><i data-lucide="video"></i> Stream Webcam</a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="user-chip">
+                <span class="avatar" id="user-avatar">AD</span>
+                <span id="user-info">admin</span>
+            </div>
+            <button id="logout-btn" class="btn btn-ghost btn-sm" style="width:100%; color:var(--text-on-dark); border-color:var(--border-dark);">
+                <i data-lucide="log-out"></i> Deconnexion
+            </button>
+        </div>
+    </aside>
+
+    <div class="main">
+        <div class="topbar">
+            <div>
+                <h1>Enquêtes</h1>
+                <div class="subtitle">Dossiers d'investigation traçables</div>
+            </div>
+            <div class="topbar-right">
+                <form class="global-search" role="search">
+                    <input type="search" class="global-search-input" placeholder="Recherche globale..."
+                           aria-label="Recherche globale" autocomplete="off">
+                    <button type="submit" class="global-search-btn" aria-label="Rechercher"><i data-lucide="search"></i></button>
+                </form>
+                <button class="btn btn-primary btn-sm" id="new-investigation-btn"><i data-lucide="folder-plus"></i> Nouvelle enquête</button>
+            </div>
+        </div>
+
+        <div class="content">
+            <div class="card">
+                <div class="flex between items-center" style="flex-wrap:wrap; gap:12px;">
+                    <h2 style="margin:0;"><i data-lucide="folder-open"></i> Dossiers</h2>
+                    <div class="tabs" id="status-filter" style="margin:0; border:none;">
+                        <button class="tab active" data-status="">Toutes</button>
+                        <button class="tab" data-status="open">Ouvertes</button>
+                        <button class="tab" data-status="closed">Fermées</button>
+                        <button class="tab" data-status="archived">Archivées</button>
+                    </div>
+                </div>
+
+                <div id="investigations-error" class="alert alert-error hidden" role="alert" aria-live="assertive"></div>
+                <div id="investigations-loading" class="loading"><span class="spinner dark"></span> Chargement des enquêtes...</div>
+
+                <div id="investigations-list" class="inv-grid hidden"></div>
+
+                <div id="investigations-empty" class="empty-state hidden">
+                    <div class="empty-icon"><i data-lucide="folder-x"></i></div>
+                    <h3>Aucune enquête</h3>
+                    <p>Créez une enquête pour regrouper des entités et générer un rapport forensique.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal création -->
+<div class="modal-overlay hidden" id="create-modal">
+    <div class="modal">
+        <h3><i data-lucide="folder-plus"></i> Nouvelle enquête</h3>
+        <div class="field"><label for="create-title">Titre</label>
+            <input class="input" type="text" id="create-title" maxlength="200" placeholder="ex. Affaire Dupont"></div>
+        <div class="field"><label for="create-description">Description</label>
+            <textarea class="input" id="create-description" rows="4" maxlength="10000" placeholder="Contexte, périmètre, objectifs..."></textarea></div>
+        <div id="create-error" class="alert alert-error hidden" role="alert"></div>
+        <div class="modal-actions">
+            <button class="btn btn-ghost" id="create-cancel">Annuler</button>
+            <button class="btn btn-primary" id="create-save"><i data-lucide="check"></i> Créer</button>
+        </div>
+    </div>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/app.js"></script>
+<script>lucide.createIcons();</script>
+</body>
+</html>

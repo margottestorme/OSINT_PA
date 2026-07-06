@@ -186,6 +186,78 @@ class PersonReportResponse(BaseModel):
     correlations: list[CorrelationResponse]
 
 
+# --- Investigations (Module 14 — gestion d'enquêtes) ---
+class InvestigationStatus(str, Enum):
+    open = "open"
+    closed = "closed"
+    archived = "archived"
+
+class InvestigationEntityType(str, Enum):
+    """Types d'entités rattachables à une enquête (liaison polymorphe)."""
+    person = "person"
+    email = "email"
+    site = "site"
+    correlation = "correlation"
+    search = "search"
+
+class InvestigationCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=10000)
+
+class InvestigationUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=10000)
+    status: InvestigationStatus | None = None
+
+class InvestigationResponse(BaseModel):
+    id: int
+    title: str
+    description: str | None = None
+    status: str
+    analyst_id: int | None = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = {"from_attributes": True}
+
+class InvestigationListItem(InvestigationResponse):
+    """Ligne de liste enrichie du nombre d'entités rattachées."""
+    entity_count: int = 0
+
+class InvestigationEntityCreate(BaseModel):
+    entity_type: InvestigationEntityType
+    entity_id: int = Field(..., ge=1)
+    notes: str | None = Field(default=None, max_length=5000)
+
+class InvestigationEntityResponse(BaseModel):
+    id: int
+    investigation_id: int
+    entity_type: str
+    entity_id: int
+    added_at: datetime
+    added_by: int | None = None
+    notes: str | None = None
+    model_config = {"from_attributes": True}
+
+class InvestigationDetailResponse(InvestigationResponse):
+    """Détail d'une enquête avec toutes ses entités rattachées."""
+    entities: list[InvestigationEntityResponse] = Field(default_factory=list)
+
+class TimelineItem(BaseModel):
+    """Entrée de chronologie forensique : une entité rattachée, datée par sa
+    propre date de découverte (created_at/discovered_at de la table métier)."""
+    entity_type: str
+    entity_id: int
+    label: str                      # libellé lisible (nom, email, url, requête…)
+    discovered_at: datetime | None  # date de découverte réelle de l'entité
+    added_at: datetime              # date de rattachement à l'enquête
+    notes: str | None = None
+
+class TimelineResponse(BaseModel):
+    investigation_id: int
+    total: int
+    items: list[TimelineItem]
+
+
 # --- Pagination ---
 class PaginationParams(BaseModel):
     limit: int = Field(default=20, ge=1, le=100)

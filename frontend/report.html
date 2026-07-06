@@ -21,6 +21,7 @@
             <a class="nav-link" href="/dashboard"><i data-lucide="layout-dashboard"></i> Dashboard</a>
             <a class="nav-link active" href="/dashboard#persons-section"><i data-lucide="users"></i> Personnes</a>
             <a class="nav-link" href="/graph"><i data-lucide="share-2"></i> Graphe</a>
+            <a class="nav-link" href="/investigations"><i data-lucide="folder-open"></i> Enquêtes</a>
             <a class="nav-link" href="/stream"><i data-lucide="video"></i> Stream Webcam</a>
         </nav>
         <div class="sidebar-footer">
@@ -95,12 +96,12 @@
                     </div>
 
                     <div class="tab-panel active" id="panel-emails">
-                        <div class="table-wrap"><table><thead><tr><th>Email</th><th>Source</th><th>Date</th></tr></thead>
+                        <div class="table-wrap"><table><thead><tr><th>Email</th><th>Source</th><th>Date</th><th></th></tr></thead>
                             <tbody id="emails-body"></tbody></table></div>
                         <div id="emails-empty" class="empty-state hidden"><div class="empty-icon"><i data-lucide="mail-x"></i></div><h3>Aucun email</h3></div>
                     </div>
                     <div class="tab-panel" id="panel-sites">
-                        <div class="table-wrap"><table><thead><tr><th>URL</th><th>Serveur</th><th>Date</th></tr></thead>
+                        <div class="table-wrap"><table><thead><tr><th>URL</th><th>Serveur</th><th>Date</th><th></th></tr></thead>
                             <tbody id="sites-body"></tbody></table></div>
                         <div id="sites-empty" class="empty-state hidden"><div class="empty-icon"><i data-lucide="globe"></i></div><h3>Aucun site</h3></div>
                     </div>
@@ -134,6 +135,23 @@
         <div class="modal-actions">
             <button class="btn btn-ghost" id="edit-cancel">Annuler</button>
             <button class="btn btn-primary" id="edit-save">Enregistrer</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal partagé : ajouter une entité à une enquête (Module 14) -->
+<div class="modal-overlay hidden" id="add-inv-modal">
+    <div class="modal">
+        <h3><i data-lucide="folder-plus"></i> Ajouter à une enquête</h3>
+        <p class="text-muted" id="add-inv-target" style="font-size:0.85rem; margin-bottom:14px;">—</p>
+        <div class="field"><label for="add-inv-select">Enquête ouverte</label>
+            <select class="input" id="add-inv-select"></select></div>
+        <div class="field"><label for="add-inv-notes">Note (optionnelle)</label>
+            <textarea class="input" id="add-inv-notes" rows="2" maxlength="5000" placeholder="Pourquoi cette entité est pertinente..."></textarea></div>
+        <div id="add-inv-error" class="alert alert-error hidden" role="alert"></div>
+        <div class="modal-actions">
+            <button class="btn btn-ghost" id="add-inv-cancel">Annuler</button>
+            <button class="btn btn-primary" id="add-inv-save"><i data-lucide="check"></i> Ajouter</button>
         </div>
     </div>
 </div>

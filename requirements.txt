@@ -51,6 +51,9 @@ redis==5.0.7
 # Indexation full-text (Module 11 — Elasticsearch, optionnel)
 elasticsearch[async]==8.11.0
 
+# Génération de rapports PDF (Module 14 — export forensique)
+reportlab==3.6.8
+
 # Logging
 loguru==0.7.2
 

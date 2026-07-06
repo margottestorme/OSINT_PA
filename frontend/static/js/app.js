@@ -27,6 +27,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (document.getElementById("global-graph")) initGraph();
     if (document.getElementById("video-stage")) initStream();
     if (document.getElementById("ft-results")) initSearchPage();
+    if (document.getElementById("investigations-list")) initInvestigations();
+    if (document.getElementById("investigation-detail")) initInvestigationDetail();
 });
 
 
@@ -81,7 +83,9 @@ function initDashboard() {
     initPagination("persons", loadPersons, () => personsOffset);
     initPagination("history", loadHistory, () => historyOffset);
     initEditModal();
+    initAddToInvestigationModal();
     document.getElementById("persons-body").addEventListener("click", onPersonsClick);
+    document.getElementById("history-body").addEventListener("click", onHistoryClick);
 
     refreshAll();
 
@@ -272,6 +276,7 @@ async function loadPersons(offset) {
                     `<td class="text-muted">${formatDate(p.created_at)}</td>` +
                     `<td><div class="flex gap-8">` +
                     `<button class="btn btn-ghost btn-sm" data-edit="${p.id}"><i data-lucide="edit-3"></i></button>` +
+                    `<button class="btn btn-ghost btn-sm" data-add-person="${p.id}" title="Ajouter à une enquête"><i data-lucide="folder-plus"></i></button>` +
                     `<button class="btn btn-ghost btn-sm" data-report="${p.id}"><i data-lucide="file-text"></i> Rapport</button>` +
                     `</div></td>`;
                 body.appendChild(tr);
@@ -290,9 +295,23 @@ async function loadPersons(offset) {
 
 function onPersonsClick(e) {
     const editBtn = e.target.closest("[data-edit]");
+    const addBtn = e.target.closest("[data-add-person]");
     const reportBtn = e.target.closest("[data-report]");
     if (editBtn) openEditModal(personsCache[editBtn.getAttribute("data-edit")], () => loadPersons(personsOffset));
+    else if (addBtn) {
+        const p = personsCache[addBtn.getAttribute("data-add-person")];
+        const label = p ? `${p.first_name} ${p.last_name}`.trim() : null;
+        openAddToInvestigationModal("person", addBtn.getAttribute("data-add-person"), label);
+    }
     else if (reportBtn) window.location.href = "/report?id=" + reportBtn.getAttribute("data-report");
+}
+
+function onHistoryClick(e) {
+    const addBtn = e.target.closest("[data-add-search]");
+    if (addBtn) {
+        openAddToInvestigationModal("search", addBtn.getAttribute("data-add-search"),
+            addBtn.getAttribute("data-label"));
+    }
 }
 
 
@@ -367,13 +386,14 @@ async function loadHistory(offset) {
                 const viewBtn = h.result_count > 0
                     ? `<a class="btn btn-ghost btn-sm" href="/results?id=${h.id}"><i data-lucide="eye"></i> Voir résultats</a>`
                     : `<span class="text-muted">—</span>`;
+                const addBtn = `<button class="btn btn-ghost btn-sm" data-add-search="${h.id}" data-label="${escapeHtml(h.query)}" title="Ajouter à une enquête"><i data-lucide="folder-plus"></i></button>`;
                 tr.innerHTML =
                     `<td>${escapeHtml(h.query)}</td>` +
                     `<td><span class="badge">${escapeHtml(h.query_type)}</span></td>` +
                     `<td><span class="status-badge done"><i data-lucide="check" style="width:13px;height:13px;"></i> Terminé</span></td>` +
                     `<td>${h.result_count}</td>` +
                     `<td class="text-muted">${formatDate(h.created_at)}</td>` +
-                    `<td>${viewBtn}</td>`;
+                    `<td><div class="flex gap-8">${viewBtn}${addBtn}</div></td>`;
                 body.appendChild(tr);
             }
             table.classList.remove("hidden");
@@ -425,9 +445,12 @@ function initReport() {
 
     initEditModal();
     initReportTabs();
+    initAddToInvestigationModal();
     document.getElementById("person-edit").addEventListener("click", () => {
         if (reportPerson) openEditModal(reportPerson, () => loadReport(reportPersonId));
     });
+    document.getElementById("emails-body").addEventListener("click", onReportEntityClick);
+    document.getElementById("sites-body").addEventListener("click", onReportEntityClick);
 
     const params = new URLSearchParams(window.location.search);
     const id = params.get("id");
@@ -466,9 +489,11 @@ async function loadReport(personId) {
         renderPersonHeader(data.person);
         renderPersonGraph(data);
         renderReportTable("emails", data.emails, (e) =>
-            `<td>${escapeHtml(e.email)}</td><td><span class="badge">${escapeHtml(e.source)}</span></td><td class="text-muted">${formatDate(e.created_at)}</td>`);
+            `<td>${escapeHtml(e.email)}</td><td><span class="badge">${escapeHtml(e.source)}</span></td><td class="text-muted">${formatDate(e.created_at)}</td>` +
+            `<td><button class="btn btn-ghost btn-sm" data-add-email="${e.id}" title="Ajouter à une enquête"><i data-lucide="folder-plus"></i></button></td>`);
         renderReportTable("sites", data.sites, (s) =>
-            `<td>${escapeHtml(s.url)}</td><td>${escapeHtml(s.server || "—")}</td><td class="text-muted">${formatDate(s.discovered_at)}</td>`);
+            `<td>${escapeHtml(s.url)}</td><td>${escapeHtml(s.server || "—")}</td><td class="text-muted">${formatDate(s.discovered_at)}</td>` +
+            `<td><button class="btn btn-ghost btn-sm" data-add-site="${s.id}" title="Ajouter à une enquête"><i data-lucide="folder-plus"></i></button></td>`);
         renderReportTable("correlations", data.correlations, (c) => {
             const ips = (c.data && c.data.ips) ? c.data.ips.join(", ") : "—";
             return `<td>${c.email_id || "—"}</td><td>${c.site_id || "—"}</td>` +
@@ -573,6 +598,20 @@ function renderActivityTimeline(data) {
         </div>`).join("");
 }
 
+function onReportEntityClick(e) {
+    const emailBtn = e.target.closest("[data-add-email]");
+    const siteBtn = e.target.closest("[data-add-site]");
+    if (emailBtn) {
+        const id = emailBtn.getAttribute("data-add-email");
+        const em = (reportExport && reportExport.emails || []).find((x) => String(x.id) === id);
+        openAddToInvestigationModal("email", id, em ? em.email : ("email #" + id));
+    } else if (siteBtn) {
+        const id = siteBtn.getAttribute("data-add-site");
+        const st = (reportExport && reportExport.sites || []).find((x) => String(x.id) === id);
+        openAddToInvestigationModal("site", id, st ? st.url : ("site #" + id));
+    }
+}
+
 function renderReportTable(prefix, items, rowFn) {
     const body = document.getElementById(prefix + "-body");
     const empty = document.getElementById(prefix + "-empty");
@@ -590,6 +629,443 @@ function showReportError(message) {
     errorEl.textContent = message;
     errorEl.classList.remove("hidden");
     document.getElementById("report-loading").classList.add("hidden");
+}
+
+
+// =====================================================
+// Modal partagé « Ajouter à une enquête » (Module 14)
+// Réutilisable depuis dashboard, rapport, historique.
+// =====================================================
+
+let _addInvTarget = null;  // { type, id }
+
+function initAddToInvestigationModal() {
+    const modal = document.getElementById("add-inv-modal");
+    if (!modal) return;  // page sans ce modal
+    document.getElementById("add-inv-cancel").addEventListener("click", closeAddToInvestigationModal);
+    document.getElementById("add-inv-save").addEventListener("click", saveAddToInvestigation);
+    modal.addEventListener("click", (e) => {
+        if (e.target.id === "add-inv-modal") closeAddToInvestigationModal();
+    });
+}
+
+async function openAddToInvestigationModal(entityType, entityId, label) {
+    _addInvTarget = { type: entityType, id: entityId };
+    const select = document.getElementById("add-inv-select");
+    const err = document.getElementById("add-inv-error");
+    const save = document.getElementById("add-inv-save");
+
+    document.getElementById("add-inv-target").textContent =
+        `Entité : ${label || (entityType + " #" + entityId)}`;
+    document.getElementById("add-inv-notes").value = "";
+    err.classList.add("hidden");
+    select.innerHTML = "<option>Chargement...</option>";
+    save.disabled = true;
+    document.getElementById("add-inv-modal").classList.remove("hidden");
+
+    try {
+        const list = await API.listInvestigations("open");
+        if (!list.length) {
+            select.innerHTML = "<option value=''>— Aucune enquête ouverte —</option>";
+            err.textContent = "Aucune enquête ouverte. Créez-en une depuis la page Enquêtes.";
+            err.classList.remove("hidden");
+            save.disabled = true;
+        } else {
+            select.innerHTML = list.map((i) =>
+                `<option value="${i.id}">${escapeHtml(i.title)}</option>`).join("");
+            save.disabled = false;
+        }
+    } catch (e) {
+        select.innerHTML = "";
+        err.textContent = e.message;
+        err.classList.remove("hidden");
+    }
+}
+
+function closeAddToInvestigationModal() {
+    document.getElementById("add-inv-modal").classList.add("hidden");
+}
+
+async function saveAddToInvestigation() {
+    const select = document.getElementById("add-inv-select");
+    const invId = select.value;
+    const err = document.getElementById("add-inv-error");
+    if (!invId) {
+        err.textContent = "Sélectionnez une enquête.";
+        err.classList.remove("hidden");
+        return;
+    }
+    const notes = document.getElementById("add-inv-notes").value.trim();
+    const title = (select.options[select.selectedIndex] || {}).text || "l'enquête";
+    try {
+        await API.addInvestigationEntity(invId, {
+            entity_type: _addInvTarget.type,
+            entity_id: parseInt(_addInvTarget.id, 10),
+            notes: notes || null,
+        });
+        closeAddToInvestigationModal();
+        toast(`Ajouté à l'enquête « ${title} »`, "success");
+    } catch (e) {
+        err.textContent = e.message;
+        err.classList.remove("hidden");
+    }
+}
+
+
+// =====================================================
+// Enquêtes (Module 14) — liste (investigations.html)
+// =====================================================
+
+// Métadonnées d'affichage par type d'entité rattachée
+const INV_ENTITY_META = {
+    person:      { icon: "user",      label: "Personne",   cls: "" },
+    email:       { icon: "mail",      label: "Email",      cls: "email" },
+    site:        { icon: "globe",     label: "Site",       cls: "site" },
+    correlation: { icon: "git-merge", label: "Corrélation", cls: "corr" },
+    search:      { icon: "search",    label: "Recherche",  cls: "" },
+};
+const INV_STATUS_META = {
+    open:     { cls: "open",     label: "Ouverte" },
+    closed:   { cls: "closed",   label: "Fermée" },
+    archived: { cls: "archived", label: "Archivée" },
+};
+
+function setUserChip() {
+    const user = currentUser();
+    const info = document.getElementById("user-info");
+    if (info) info.textContent = user;
+    const avatar = document.getElementById("user-avatar");
+    if (avatar) avatar.textContent = user.slice(0, 2).toUpperCase();
+}
+
+let invStatusFilter = "";
+
+function initInvestigations() {
+    setUserChip();
+
+    document.getElementById("new-investigation-btn").addEventListener("click", openCreateModal);
+    document.getElementById("create-cancel").addEventListener("click", closeCreateModal);
+    document.getElementById("create-save").addEventListener("click", saveInvestigation);
+    document.getElementById("create-modal").addEventListener("click", (e) => {
+        if (e.target.id === "create-modal") closeCreateModal();
+    });
+
+    document.getElementById("status-filter").addEventListener("click", (e) => {
+        const tab = e.target.closest(".tab");
+        if (!tab) return;
+        document.querySelectorAll("#status-filter .tab").forEach((t) => t.classList.toggle("active", t === tab));
+        invStatusFilter = tab.getAttribute("data-status");
+        loadInvestigations();
+    });
+
+    document.getElementById("investigations-list").addEventListener("click", (e) => {
+        const card = e.target.closest(".inv-card");
+        if (card) window.location.href = "/investigation_detail?id=" + card.getAttribute("data-id");
+    });
+
+    loadInvestigations();
+}
+
+async function loadInvestigations() {
+    const loading = document.getElementById("investigations-loading");
+    const list = document.getElementById("investigations-list");
+    const empty = document.getElementById("investigations-empty");
+    const errorEl = document.getElementById("investigations-error");
+    loading.classList.remove("hidden");
+    list.classList.add("hidden");
+    empty.classList.add("hidden");
+    errorEl.classList.add("hidden");
+
+    try {
+        const items = await API.listInvestigations(invStatusFilter);
+        if (!items.length) {
+            empty.classList.remove("hidden");
+        } else {
+            list.innerHTML = items.map(renderInvestigationCard).join("");
+            list.classList.remove("hidden");
+        }
+    } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.classList.remove("hidden");
+    } finally {
+        loading.classList.add("hidden");
+        lucide.createIcons();
+    }
+}
+
+function renderInvestigationCard(inv) {
+    const st = INV_STATUS_META[inv.status] || { cls: "", label: inv.status };
+    const desc = inv.description ? escapeHtml(inv.description) : "<span class='text-muted'>Aucune description</span>";
+    return `<div class="inv-card" data-id="${inv.id}">
+        <div class="flex between items-center" style="gap:8px;">
+            <span class="inv-card-title">${escapeHtml(inv.title)}</span>
+            <span class="status-badge ${st.cls}">${st.label}</span>
+        </div>
+        <div class="inv-card-desc">${desc}</div>
+        <div class="inv-card-meta">
+            <span><i data-lucide="layers"></i> ${inv.entity_count} entité${inv.entity_count > 1 ? "s" : ""}</span>
+            <span><i data-lucide="calendar"></i> ${formatDate(inv.created_at)}</span>
+        </div>
+    </div>`;
+}
+
+function openCreateModal() {
+    document.getElementById("create-title").value = "";
+    document.getElementById("create-description").value = "";
+    document.getElementById("create-error").classList.add("hidden");
+    document.getElementById("create-modal").classList.remove("hidden");
+    document.getElementById("create-title").focus();
+}
+
+function closeCreateModal() {
+    document.getElementById("create-modal").classList.add("hidden");
+}
+
+async function saveInvestigation() {
+    const title = document.getElementById("create-title").value.trim();
+    const description = document.getElementById("create-description").value.trim();
+    const errorEl = document.getElementById("create-error");
+    if (!title) {
+        errorEl.textContent = "Le titre est obligatoire.";
+        errorEl.classList.remove("hidden");
+        return;
+    }
+    try {
+        await API.createInvestigation({ title, description: description || null });
+        closeCreateModal();
+        toast("Enquête créée", "success");
+        loadInvestigations();
+    } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.classList.remove("hidden");
+    }
+}
+
+
+// =====================================================
+// Enquêtes (Module 14) — détail (investigation_detail.html)
+// =====================================================
+
+let currentInvestigationId = null;
+
+function initInvestigationDetail() {
+    setUserChip();
+    const id = new URLSearchParams(window.location.search).get("id");
+    if (!id) {
+        showInvestigationError("Aucune enquête spécifiée.");
+        return;
+    }
+    currentInvestigationId = id;
+
+    // Onglets Entités / Timeline
+    document.getElementById("inv-tabs").addEventListener("click", (e) => {
+        const tab = e.target.closest(".tab");
+        if (!tab) return;
+        const name = tab.getAttribute("data-tab");
+        document.querySelectorAll("#inv-tabs .tab").forEach((t) => t.classList.toggle("active", t === tab));
+        document.querySelectorAll("#investigation-detail .tab-panel").forEach((p) =>
+            p.classList.toggle("active", p.id === "panel-" + name));
+    });
+
+    // Export PDF — téléchargement direct (Blob), sans changer de page
+    document.getElementById("export-pdf-btn").addEventListener("click", exportInvestigationPdf);
+
+    // Modal d'ajout d'entité
+    document.getElementById("add-entity-btn").addEventListener("click", openAddEntityModal);
+    document.getElementById("add-entity-cancel").addEventListener("click", closeAddEntityModal);
+    document.getElementById("add-entity-save").addEventListener("click", saveEntity);
+    document.getElementById("add-entity-modal").addEventListener("click", (e) => {
+        if (e.target.id === "add-entity-modal") closeAddEntityModal();
+    });
+
+    // Retrait d'une entité (délégation sur le tableau)
+    document.getElementById("entities-body").addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-remove]");
+        if (btn) removeEntity(btn.getAttribute("data-remove"));
+    });
+
+    loadInvestigation(currentInvestigationId);
+}
+
+async function loadInvestigation(id) {
+    const loading = document.getElementById("investigation-loading");
+    const detail = document.getElementById("investigation-detail");
+    const errorEl = document.getElementById("investigation-error");
+    loading.classList.remove("hidden");
+    detail.classList.add("hidden");
+    errorEl.classList.add("hidden");
+
+    try {
+        // Détail (ids de rattachement + notes) + timeline (libellés + dates de découverte)
+        const [inv, timeline] = await Promise.all([
+            API.getInvestigation(id),
+            API.getInvestigationTimeline(id),
+        ]);
+
+        renderInvestigationHeader(inv);
+
+        // Carte des libellés résolus, indexée par "type:entity_id" (fournie par la timeline)
+        const labels = {};
+        timeline.items.forEach((it) => { labels[it.entity_type + ":" + it.entity_id] = it.label; });
+
+        renderEntities(inv.entities, labels);
+        renderInvestigationTimeline(timeline.items);
+
+        document.getElementById("export-pdf-btn").disabled = false;
+        detail.classList.remove("hidden");
+        lucide.createIcons();
+    } catch (err) {
+        showInvestigationError(err.message);
+    } finally {
+        loading.classList.add("hidden");
+    }
+}
+
+function renderInvestigationHeader(inv) {
+    document.querySelector(".topbar h1").textContent = inv.title;
+    document.getElementById("inv-title").textContent = inv.title;
+
+    const st = INV_STATUS_META[inv.status] || { cls: "", label: inv.status };
+    const badge = document.getElementById("inv-status");
+    badge.textContent = st.label;
+    badge.className = "status-badge " + st.cls;
+
+    document.getElementById("inv-id").textContent = "#" + inv.id;
+    document.getElementById("inv-analyst").innerHTML =
+        `<i data-lucide="user"></i> ${inv.analyst_id ? "Analyste #" + inv.analyst_id : "—"}`;
+    document.getElementById("inv-created").innerHTML =
+        `<i data-lucide="calendar"></i> Créée le ${formatDate(inv.created_at)}`;
+    document.getElementById("inv-updated").innerHTML =
+        `<i data-lucide="refresh-cw"></i> Maj ${formatDate(inv.updated_at)}`;
+
+    const desc = document.getElementById("inv-description");
+    if (inv.description) {
+        desc.textContent = inv.description;
+        desc.classList.remove("hidden");
+    } else {
+        desc.classList.add("hidden");
+    }
+}
+
+function renderEntities(entities, labels) {
+    document.getElementById("count-entities").textContent = entities.length;
+    const body = document.getElementById("entities-body");
+    const empty = document.getElementById("entities-empty");
+
+    if (!entities.length) {
+        body.innerHTML = "";
+        empty.classList.remove("hidden");
+        return;
+    }
+    empty.classList.add("hidden");
+
+    body.innerHTML = entities.map((en) => {
+        const meta = INV_ENTITY_META[en.entity_type] || { icon: "box", label: en.entity_type, cls: "" };
+        const label = labels[en.entity_type + ":" + en.entity_id] || ("#" + en.entity_id);
+        return `<tr>
+            <td><span class="badge ${meta.cls}"><i data-lucide="${meta.icon}"></i> ${meta.label}</span></td>
+            <td>${escapeHtml(label)} <span class="text-muted mono">#${en.entity_id}</span></td>
+            <td class="text-muted">${en.notes ? escapeHtml(en.notes) : "—"}</td>
+            <td class="text-muted">${formatDate(en.added_at)}</td>
+            <td><button class="btn btn-ghost btn-sm" data-remove="${en.id}" title="Retirer de l'enquête"><i data-lucide="x"></i></button></td>
+        </tr>`;
+    }).join("");
+}
+
+function renderInvestigationTimeline(items) {
+    const timeline = document.getElementById("inv-timeline");
+    const empty = document.getElementById("timeline-empty");
+
+    if (!items.length) {
+        timeline.innerHTML = "";
+        empty.classList.remove("hidden");
+        return;
+    }
+    empty.classList.add("hidden");
+
+    timeline.innerHTML = items.map((it) => {
+        const meta = INV_ENTITY_META[it.entity_type] || { label: it.entity_type, cls: "" };
+        const date = it.discovered_at || it.added_at;
+        const note = it.notes ? ` · <span class="text-muted">${escapeHtml(it.notes)}</span>` : "";
+        return `<div class="timeline-item ${meta.cls}">
+            <div class="tl-title">${meta.label} : ${escapeHtml(it.label)}${note}</div>
+            <div class="tl-date">${formatDate(date)}</div>
+        </div>`;
+    }).join("");
+}
+
+async function exportInvestigationPdf() {
+    const btn = document.getElementById("export-pdf-btn");
+    btn.disabled = true;
+    try {
+        const { blob, filename } = await API.exportInvestigationPdf(currentInvestigationId);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        toast("Rapport PDF téléchargé", "success");
+    } catch (err) {
+        toast(err.message, "error");
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function openAddEntityModal() {
+    document.getElementById("entity-type").value = "person";
+    document.getElementById("entity-id").value = "";
+    document.getElementById("entity-notes").value = "";
+    document.getElementById("add-entity-error").classList.add("hidden");
+    document.getElementById("add-entity-modal").classList.remove("hidden");
+    document.getElementById("entity-id").focus();
+}
+
+function closeAddEntityModal() {
+    document.getElementById("add-entity-modal").classList.add("hidden");
+}
+
+async function saveEntity() {
+    const entity_type = document.getElementById("entity-type").value;
+    const entity_id = parseInt(document.getElementById("entity-id").value, 10);
+    const notes = document.getElementById("entity-notes").value.trim();
+    const errorEl = document.getElementById("add-entity-error");
+
+    if (!entity_id || entity_id < 1) {
+        errorEl.textContent = "Identifiant d'entité invalide.";
+        errorEl.classList.remove("hidden");
+        return;
+    }
+    try {
+        await API.addInvestigationEntity(currentInvestigationId, { entity_type, entity_id, notes: notes || null });
+        closeAddEntityModal();
+        toast("Entité rattachée", "success");
+        loadInvestigation(currentInvestigationId);
+    } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.classList.remove("hidden");
+    }
+}
+
+async function removeEntity(linkId) {
+    if (!confirm("Retirer cette entité de l'enquête ?")) return;
+    try {
+        await API.removeInvestigationEntity(currentInvestigationId, linkId);
+        toast("Entité retirée", "info");
+        loadInvestigation(currentInvestigationId);
+    } catch (err) {
+        toast(err.message, "error");
+    }
+}
+
+function showInvestigationError(message) {
+    const errorEl = document.getElementById("investigation-error");
+    errorEl.textContent = message;
+    errorEl.classList.remove("hidden");
+    document.getElementById("investigation-loading").classList.add("hidden");
 }
 
 
