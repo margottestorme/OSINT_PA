@@ -84,6 +84,26 @@ async def test_check_username_soft404_not_found_text():
 
 
 @pytest.mark.asyncio
+async def test_check_username_check_url_used_for_request_url_for_display():
+    # Instagram-like : l'API interrogée (check_url) diffère de la page affichée (url).
+    platform = {"name": "Instagram", "url": "https://www.instagram.com/{username}/",
+                "check_url": "https://www.instagram.com/api/v1/users/web_profile_info/?username={username}",
+                "category": "social", "check_method": "status_code"}
+    requested_urls = []
+
+    def handler(req):
+        requested_urls.append(str(req.url))
+        return httpx.Response(200)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as s:
+        r = await uc.check_username("john", platform, s)
+
+    assert requested_urls == ["https://www.instagram.com/api/v1/users/web_profile_info/?username=john"]
+    assert r["url"] == "https://www.instagram.com/john/"  # page humaine, pas l'API
+    assert r["found"] is True
+
+
+@pytest.mark.asyncio
 async def test_check_username_network_error():
     platform = {"name": "GitHub", "url": "https://github.com/{username}", "category": "dev",
                 "check_method": "status_code"}
@@ -95,6 +115,99 @@ async def test_check_username_network_error():
         r = await uc.check_username("john", platform, s)
     assert r["found"] is False
     assert r["error"] == "ConnectError"
+
+
+# =============================================================
+# Sources à API officielle (clé optionnelle) — YouTube, Twitch
+# =============================================================
+
+def _settings(**kw):
+    from app.core.config import Settings
+    base = {"YOUTUBE_API_KEY": "", "TWITCH_CLIENT_ID": "", "TWITCH_CLIENT_SECRET": ""}
+    base.update(kw)
+    return Settings(**base)
+
+
+def test_build_dynamic_platforms_empty_without_keys():
+    with patch("app.core.config.get_settings", return_value=_settings()):
+        assert uc._build_dynamic_platforms() == []
+
+
+def test_build_dynamic_platforms_with_keys():
+    with patch("app.core.config.get_settings",
+               return_value=_settings(YOUTUBE_API_KEY="yk", TWITCH_CLIENT_ID="ci", TWITCH_CLIENT_SECRET="cs")):
+        dynamic = uc._build_dynamic_platforms()
+    names = {p["name"] for p in dynamic}
+    assert names == {"YouTube", "Twitch"}
+
+
+@pytest.mark.asyncio
+async def test_check_youtube_found():
+    def handler(req):
+        assert "forHandle=johndoe" in str(req.url)
+        assert "key=yk" in str(req.url)
+        return httpx.Response(200, json={"items": [{"id": "abc"}]})
+
+    with patch("app.core.config.get_settings", return_value=_settings(YOUTUBE_API_KEY="yk")):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as s:
+            r = await uc._check_youtube("johndoe", {}, s)
+    assert r["found"] is True
+    assert r["platform"] == "YouTube"
+    assert r["url"] == "https://www.youtube.com/@johndoe"
+
+
+@pytest.mark.asyncio
+async def test_check_youtube_not_found_empty_items():
+    def handler(req):
+        return httpx.Response(200, json={"items": []})
+
+    with patch("app.core.config.get_settings", return_value=_settings(YOUTUBE_API_KEY="yk")):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as s:
+            r = await uc._check_youtube("zqxvwk9284nonexistent", {}, s)
+    assert r["found"] is False
+    assert r["error"] is None
+
+
+@pytest.mark.asyncio
+async def test_check_twitch_found_fetches_and_caches_token():
+    uc._twitch_token_cache["token"] = None
+    uc._twitch_token_cache["expires_at"] = 0.0
+    calls = []
+
+    def handler(req):
+        calls.append(str(req.url))
+        if "id.twitch.tv" in str(req.url):
+            return httpx.Response(200, json={"access_token": "tok123", "expires_in": 3600})
+        assert req.headers["Authorization"] == "Bearer tok123"
+        assert req.headers["Client-Id"] == "ci"
+        return httpx.Response(200, json={"data": [{"id": "1", "login": "johndoe"}]})
+
+    settings = _settings(TWITCH_CLIENT_ID="ci", TWITCH_CLIENT_SECRET="cs")
+    with patch("app.core.config.get_settings", return_value=settings):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as s:
+            r = await uc._check_twitch("johndoe", {}, s)
+            # 2e appel : le token déjà en cache ne doit pas être re-demandé.
+            r2 = await uc._check_twitch("johndoe", {}, s)
+
+    assert r["found"] is True
+    assert r2["found"] is True
+    assert sum("id.twitch.tv" in c for c in calls) == 1  # un seul appel au token, pas deux
+
+
+@pytest.mark.asyncio
+async def test_check_twitch_not_found_empty_data():
+    uc._twitch_token_cache["token"] = "tok123"
+    uc._twitch_token_cache["expires_at"] = 9_999_999_999.0
+
+    def handler(req):
+        return httpx.Response(200, json={"data": []})
+
+    settings = _settings(TWITCH_CLIENT_ID="ci", TWITCH_CLIENT_SECRET="cs")
+    with patch("app.core.config.get_settings", return_value=settings):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as s:
+            r = await uc._check_twitch("zqxvwk9284nonexistent", {}, s)
+    assert r["found"] is False
+    assert r["error"] is None
 
 
 # =============================================================
@@ -114,7 +227,10 @@ async def test_check_all_platforms_yields_all_with_bounded_concurrency():
                 "category": platform["category"], "found": False,
                 "response_time_ms": 1.0, "error": None}
 
-    with patch.object(uc, "check_username", side_effect=fake_check):
+    # Neutralise les sources dynamiques (YouTube/Twitch) : leur activation dépend du vrai
+    # .env, indépendant de ce test — jamais d'appel réseau réel en test (cf. conftest).
+    with patch.object(uc, "check_username", side_effect=fake_check), \
+         patch.object(uc, "_build_dynamic_platforms", return_value=[]):
         results = [r async for r in uc.check_all_platforms("john", max_concurrent=20)]
 
     assert len(results) == uc.PLATFORM_COUNT
@@ -133,7 +249,11 @@ def test_normalize_username_strip_and_case_preserved():
 
 
 def test_platform_registry():
-    assert uc.PLATFORM_COUNT == 157
+    # 157 définies au total (voir ALL_PLATFORM_DEFINITIONS) ; 59 désactivées (reliable=False :
+    # audit du 2026-07-07 en 2 vagues + RubyGems/NameMC détectés par
+    # scripts/audit_username_platforms.py) ; Instagram réparée via check_url -> 98 actives.
+    assert uc.PLATFORM_COUNT == 98
+    assert len(uc.ALL_PLATFORM_DEFINITIONS) == 157
     names = [p["name"] for p in uc.PLATFORMS]
     assert len(set(names)) == len(names)  # noms uniques
     assert all("{username}" in p["url"] for p in uc.PLATFORMS)
@@ -144,16 +264,179 @@ def test_platform_registry():
 
 
 # =============================================================
+# Moteur — generate_username_variants (set élargi)
+# =============================================================
+
+def test_generate_variants_two_words_covers_expected_forms():
+    variants = uc.generate_username_variants("margotte.storme")
+    assert variants[0] == "margotte.storme"  # l'original toujours en premier
+    assert "margottestorme" in variants        # sans séparateur
+    assert "margotte_storme" in variants        # underscore
+    assert "margotte-storme" in variants        # tiret
+    assert "storme.margotte" in variants        # ordre inversé
+    assert "m.storme" in variants               # initiale prénom
+    assert "margotte.storme1" in variants        # suffixe numérique sur l'original
+    assert "margottestorme123" in variants        # suffixe numérique sur la forme sans séparateur
+    # Pas de doublon (comparaison insensible à la casse)
+    assert len(variants) == len({v.lower() for v in variants})
+    assert len(variants) <= uc.MAX_VARIANTS
+
+
+def test_generate_variants_single_word_includes_split_insertions_and_suffixes():
+    # "johndoe" (aucun séparateur) doit aussi tenter d'insérer un séparateur à des positions
+    # plausibles (préfixe court en tête), pas seulement des suffixes numériques — sinon un
+    # compte réel "john_doe" ne serait jamais retrouvé en cherchant juste "johndoe".
+    variants = uc.generate_username_variants("johndoe")
+    assert variants[0] == "johndoe"
+    assert "john_doe" in variants
+    assert "john.doe" in variants
+    assert "johndoe1" in variants
+    assert "johndoe123" in variants
+
+
+def test_generate_variants_single_word_real_world_case():
+    # Cas réel rapporté : chercher "somargotte" doit permettre de retrouver un compte
+    # "so_margotte" (préfixe court "so" = diminutif/initiales de prénom).
+    variants = uc.generate_username_variants("somargotte")
+    assert "so_margotte" in variants
+    assert "so.margotte" in variants
+
+
+def test_generate_variants_empty_or_blank():
+    assert uc.generate_username_variants("") == []
+    assert uc.generate_username_variants("   ") == []
+
+
+def test_generate_variants_never_exceeds_url_charset():
+    # Toute variante générée doit rester compatible avec la validation username (3-30, [A-Za-z0-9._-])
+    for seed in ("margotte.storme", "jean-pierre.dupont", "a.b", "johndoe"):
+        for v in uc.generate_username_variants(seed):
+            assert uc._VARIANT_RE.match(v), f"variante invalide générée : {v}"
+
+
+# =============================================================
+# Moteur — _check_platform_variants (toutes les variantes testées, plusieurs comptes possibles)
+# =============================================================
+
+@pytest.mark.asyncio
+async def test_check_platform_variants_single_match_returns_one_entry():
+    platform = {"name": "X", "url": "https://x.example/{username}", "category": "social",
+                "check_method": "status_code"}
+    variants = ["margotte.storme", "margottestorme", "margotte_storme"]
+
+    async def fake_check(v, p, s):
+        return {"platform": "X", "url": p["url"].format(username=v), "category": "social",
+                "found": v == "margottestorme", "response_time_ms": 1.0, "error": None}
+
+    with patch.object(uc, "check_username", side_effect=fake_check):
+        results = await uc._check_platform_variants(variants, platform, None, asyncio.Semaphore(5))
+
+    assert len(results) == 1
+    assert results[0]["found"] is True
+    assert results[0]["variant"] == "margottestorme"
+    assert results[0]["platform"] == "X"
+    assert results[0]["is_primary"] is True
+
+
+@pytest.mark.asyncio
+async def test_check_platform_variants_multiple_matches_returns_all_in_variant_order():
+    # Deux vrais comptes distincts sous deux variantes différentes (ex : mstorme ET
+    # margottestorme tous les deux réels sur GitHub) — les DEUX doivent remonter.
+    platform = {"name": "X", "url": "https://x.example/{username}", "category": "social",
+                "check_method": "status_code"}
+    variants = ["margotte.storme", "margottestorme", "mstorme", "margotte_storme"]
+
+    async def fake_check(v, p, s):
+        return {"platform": "X", "url": p["url"].format(username=v), "category": "social",
+                "found": v in ("margottestorme", "mstorme"), "response_time_ms": 1.0, "error": None}
+
+    with patch.object(uc, "check_username", side_effect=fake_check):
+        results = await uc._check_platform_variants(variants, platform, None, asyncio.Semaphore(5))
+
+    assert len(results) == 2
+    # Ordre = ordre des variantes (margottestorme avant mstorme dans la liste `variants`)
+    assert [r["variant"] for r in results] == ["margottestorme", "mstorme"]
+    assert results[0]["is_primary"] is True
+    assert results[1]["is_primary"] is False
+    assert all(r["found"] for r in results)
+
+
+@pytest.mark.asyncio
+async def test_check_platform_variants_none_found_falls_back_to_original():
+    platform = {"name": "X", "url": "https://x.example/{username}", "category": "social",
+                "check_method": "status_code"}
+    variants = ["margotte.storme", "margottestorme"]
+
+    async def fake_check(v, p, s):
+        return {"platform": "X", "url": p["url"].format(username=v), "category": "social",
+                "found": False, "response_time_ms": 1.0, "error": None}
+
+    with patch.object(uc, "check_username", side_effect=fake_check):
+        results = await uc._check_platform_variants(variants, platform, None, asyncio.Semaphore(5))
+
+    assert len(results) == 1
+    assert results[0]["found"] is False
+    assert results[0]["variant"] == "margotte.storme"  # repli sur l'originale
+    assert results[0]["is_primary"] is True
+
+
+@pytest.mark.asyncio
+async def test_check_all_platforms_result_carries_variant_field():
+    async def fake_check(v, p, s):
+        return {"platform": p["name"], "url": p["url"].format(username=v),
+                "category": p["category"], "found": False, "response_time_ms": 1.0, "error": None}
+
+    with patch.object(uc, "check_username", side_effect=fake_check), \
+         patch.object(uc, "_build_dynamic_platforms", return_value=[]):
+        results = [r async for r in uc.check_all_platforms("margotte.storme", max_concurrent=20)]
+
+    assert len(results) == uc.PLATFORM_COUNT  # un résultat par plateforme (aucun match ici)
+    assert all("variant" in r for r in results)
+    assert all(r["is_primary"] is True for r in results)
+
+
+@pytest.mark.asyncio
+async def test_check_all_platforms_multiple_matches_yield_more_than_platform_count():
+    # GitHub matche 2 variantes -> 2 événements pour GitHub -> total > PLATFORM_COUNT
+    async def fake_check(v, p, s):
+        found = p["name"] == "GitHub" and v in ("margottestorme", "mstorme")
+        return {"platform": p["name"], "url": p["url"].format(username=v),
+                "category": p["category"], "found": found, "response_time_ms": 1.0, "error": None}
+
+    with patch.object(uc, "check_username", side_effect=fake_check), \
+         patch.object(uc, "_build_dynamic_platforms", return_value=[]):
+        results = [r async for r in uc.check_all_platforms("margotte.storme", max_concurrent=20)]
+
+    assert len(results) == uc.PLATFORM_COUNT + 1
+    github_results = [r for r in results if r["platform"] == "GitHub"]
+    assert len(github_results) == 2
+    assert {r["variant"] for r in github_results} == {"margottestorme", "mstorme"}
+    assert sum(1 for r in github_results if r["is_primary"]) == 1
+
+
+# =============================================================
 # Endpoint — /api/username/platforms
 # =============================================================
 
 @pytest.mark.asyncio
 async def test_platforms_endpoint(client, auth_headers):
-    r = await client.get("/api/username/platforms", headers=auth_headers)
+    # Neutralise les sources dynamiques : leur activation dépend du vrai .env (YouTube/Twitch),
+    # indépendant de ce test — le total attendu ici est celui du registre statique seul.
+    with patch("app.api.username_routes._build_dynamic_platforms", return_value=[]):
+        r = await client.get("/api/username/platforms", headers=auth_headers)
     assert r.status_code == 200
     data = r.json()
-    assert data["total"] == 157
+    assert data["total"] == 98
     assert len(data["categories"]) == 9
+
+
+@pytest.mark.asyncio
+async def test_platforms_endpoint_includes_dynamic_sources_when_configured(client, auth_headers):
+    dynamic = [{"name": "YouTube", "category": "creative", "checker": None}]
+    with patch("app.api.username_routes._build_dynamic_platforms", return_value=dynamic):
+        r = await client.get("/api/username/platforms", headers=auth_headers)
+    assert r.status_code == 200
+    assert r.json()["total"] == 99
 
 
 @pytest.mark.asyncio

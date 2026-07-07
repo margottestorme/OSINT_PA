@@ -1,0 +1,31 @@
+name: Audit registre pseudos (Module 15)
+
+# Exécute scripts/audit_username_platforms.py régulièrement pour détecter la dérive du
+# registre PLATFORMS (marqueur devenu obsolète, nouveau faux positif anti-bot) sans qu'un
+# utilisateur ait à y penser — voir le commentaire d'en-tête de app/osint/username_checker.py.
+# N'installe que les dépendances réellement importées par le script (httpx/loguru/
+# pydantic-settings) : pas besoin de compiler dlib/face_recognition/spaCy pour cet audit.
+on:
+  schedule:
+    - cron: "0 6 * * 1" # tous les lundis 06h00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installer les dépendances minimales du script
+        run: pip install httpx==0.27.0 loguru==0.7.2 pydantic-settings==2.3.4
+
+      - name: Lancer l'audit du registre de plateformes
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+        run: python scripts/audit_username_platforms.py

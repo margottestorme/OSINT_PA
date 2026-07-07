@@ -297,6 +297,7 @@ class UsernameResultItem(BaseModel):
     found: bool = False
     response_time_ms: float | None = None
     error: str | None = Field(default=None, max_length=100)
+    variant: str | None = Field(default=None, max_length=30)
 
 class UsernameSaveRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=30)

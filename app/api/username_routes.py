@@ -6,7 +6,8 @@ Deux entrées :
   les résultats en base, renvoie immédiatement un `search_id`.
 
 Le username est validé (3–30 caractères, `[A-Za-z0-9._-]`) et l'énumération est limitée à
-1 recherche / 30 s par utilisateur (157 requêtes externes par run).
+1 recherche / 30 s par utilisateur (112 plateformes actives × jusqu'à 20 variantes générées
+par `generate_username_variants` — voir `app/osint/username_checker.py`).
 """
 import asyncio
 import json
@@ -27,6 +28,7 @@ from app.schemas.schemas import UsernameSaveRequest, UsernameSearchStartResponse
 from app.api.rate_limit import username_rate_limiter
 from app.osint.username_checker import (
     PLATFORM_COUNT,
+    _build_dynamic_platforms,
     check_all_platforms,
     normalize_username,
     platform_categories,
@@ -37,8 +39,14 @@ username_router = APIRouter(prefix="/api/username", tags=["username"])
 
 @username_router.get("/platforms")
 async def username_platforms(token_data: dict = Depends(verify_token)) -> dict:
-    """Métadonnées du registre : total de plateformes + catégories (pour l'UI)."""
-    return {"total": PLATFORM_COUNT, "categories": platform_categories()}
+    """Métadonnées du registre : total de plateformes + catégories (pour l'UI).
+
+    Inclut les plateformes à API officielle (YouTube, Twitch) si leur clé est configurée
+    (cf. `_build_dynamic_platforms` — désactivées silencieusement sinon).
+    """
+    dynamic = _build_dynamic_platforms()
+    categories = set(platform_categories()) | {p["category"] for p in dynamic}
+    return {"total": PLATFORM_COUNT + len(dynamic), "categories": sorted(categories)}
 
 # 3 à 30 caractères : lettres, chiffres, point, underscore, tiret.
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{3,30}$")
@@ -206,6 +214,7 @@ async def _run_username_search(search_id: int, username: str) -> None:
                     found=result["found"],
                     response_time_ms=result["response_time_ms"],
                     error=result["error"],
+                    matched_variant=result.get("variant"),
                 ))
                 if result["found"]:
                     found += 1
@@ -275,7 +284,7 @@ async def username_save(
 ):
     """Persiste des résultats **déjà collectés** côté client (issus du stream SSE).
 
-    Évite de re-énumérer les 157 plateformes : crée le `UsernameSearch` (déjà terminé),
+    Évite de ré-énumérer toutes les plateformes : crée le `UsernameSearch` (déjà terminé),
     ses résultats, les `Site` pour les URLs trouvées, et déclenche l'enrichissement GitHub.
     Renvoie le `search_id`, rattachable ensuite à une enquête (entity_type `username_search`).
     """
@@ -299,6 +308,7 @@ async def username_save(
             search_id=search.id,
             platform=r["platform"], url=r["url"], category=r["category"],
             found=r["found"], response_time_ms=r["response_time_ms"], error=r["error"],
+            matched_variant=r.get("variant"),
         ))
     await _persist_found_sites(db, results)
 
