@@ -60,6 +60,15 @@ MAX_VARIANTS = 25  # borne haute, évite un nombre de requêtes incontrôlé sur
 # générées qui ne seraient pas exploitables en URL (ex : variante vide ou trop longue).
 _VARIANT_RE = re.compile(r"^[A-Za-z0-9._-]{3,30}$")
 
+# Codes HTTP qui ne confirment JAMAIS l'absence d'un compte : anti-bot/rate-limit (401/403/429)
+# ou erreur serveur transitoire (5xx). Découvert sur Instagram (401 "Please wait a few minutes"
+# sous charge), qui se lisait à tort comme "compte inexistant" — un faux négatif silencieux
+# masquant un compte réel (voir "steven.gausset" / "stevengausset"). Ces codes sont donc
+# remontés en `error` avant toute évaluation `_evaluate_found`, quelle que soit la méthode de
+# détection de la plateforme (les trois méthodes traitaient déjà un statut ≥400 comme "pas
+# trouvé" par défaut — même angle mort).
+_AMBIGUOUS_STATUS_CODES = {401, 403, 429}
+
 # User-Agents rotatifs (navigateurs récents) — réduit les blocages/anti-bot triviaux.
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -118,14 +127,22 @@ PLATFORMS: list[dict] = [
     # depuis février 2026 (passage au pay-per-use, ~0,01 $/appel lié à un utilisateur) — donc
     # aucune solution gratuite/légale exploitable sans facturation récurrente. Reste désactivé.
     {"name": "Twitter/X", "url": "https://x.com/{username}", "category": "social", "check_method": "status_code", "reliable": False},
-    # Page web = SPA (aucun signal fiable, cf. audit 2026-07-07). L'API interne
-    # `web_profile_info` (utilisée par le client web d'Instagram lui-même) répond en JSON
-    # avec un vrai 200/404 selon l'existence du compte — X-IG-App-ID est une constante
-    # publique du client web, pas un secret. `url` reste la page de profil (lien cliquable).
-    {"name": "Instagram", "url": "https://www.instagram.com/{username}/",
-     "check_url": "https://www.instagram.com/api/v1/users/web_profile_info/?username={username}",
-     "category": "social", "check_method": "status_code",
-     "headers": {"X-IG-App-ID": "936619743392459", "Accept": "application/json"}},
+    # Ancienne implémentation (API interne `web_profile_info`) abandonnée le 2026-07-07 :
+    # rate-limitée dès quelques requêtes rapprochées (401 "Please wait a few minutes"),
+    # renvoyant alors un faux négatif silencieux (cf. bug remonté sur "steven.gausset" —
+    # variante "stevengausset" bien réelle, jamais signalée). La page de profil classique,
+    # elle, est en fait server-rendue pour le <title>/og:description (SEO) : un compte réel
+    # produit toujours "<nom> (@pseudo) • Instagram photos and videos", un pseudo inexistant
+    # retombe sur le titre générique "Instagram" — marqueur stable, vérifié y compris sur un
+    # compte à 0 post et sur des variantes avec point/underscore. MAIS Instagram sert cette
+    # page de façon intermittente sous deux formes (rendu SEO server-rendu, ou shell générique
+    # côté client) même pour un compte réel et existant — mesuré à ~33 % de chance de marqueur
+    # présent par tentative (échantillon du 2026-07-07). `retry_sweep=3` fait relancer jusqu'à
+    # 3 passages complets supplémentaires sur toutes les variantes si rien n'est trouvé (voir
+    # `_check_platform_variants`), portant la probabilité cumulée de capter un compte réel à
+    # ~80 % — réduit fortement le faux négatif sans jamais l'éliminer complètement.
+    {"name": "Instagram", "url": "https://www.instagram.com/{username}/", "category": "social",
+     "check_method": "found_text", "found_text": "• Instagram photos and videos", "retry_sweep": 3},
     # Ré-investigué le 2026-07-07 : le lookup par username a été retiré du Graph API dès la
     # v2.0 (2015) — seul `/search?type=user` existe encore, et il exige un access token d'app
     # avec revue Meta (usage professionnel justifié), donc inexploitable pour ce projet. Aucune
@@ -421,10 +438,11 @@ def _build_url(platform: dict, username: str) -> str:
 def _build_check_url(platform: dict, username: str) -> str:
     """URL réellement interrogée pour la vérification.
 
-    Diffère de `url` (toujours la page de profil humaine, affichée/cliquable) quand la
-    plateforme expose une API de vérification distincte — ex : Instagram, dont la page web
-    est une SPA (aucun signal fiable), mais dont l'API interne `web_profile_info` répond en
-    JSON avec un vrai 404/200 selon l'existence du compte.
+    Diffère de `url` (toujours la page de profil humaine, affichée/cliquable) quand une
+    plateforme expose une API de vérification distincte plus fiable que sa page web (aucune
+    entrée du registre n'en a besoin actuellement — Instagram utilisait ce mécanisme avant le
+    2026-07-07, voir son commentaire dans `PLATFORMS` — mais le champ `check_url` reste
+    disponible pour une future plateforme dans le même cas).
     """
     return platform.get("check_url", platform["url"]).format(username=username)
 
@@ -479,6 +497,15 @@ async def check_username(
             follow_redirects=True,
         )
         elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
+        if response.status_code in _AMBIGUOUS_STATUS_CODES or response.status_code >= 500:
+            return {
+                "platform": platform["name"],
+                "url": url,
+                "category": platform["category"],
+                "found": False,
+                "response_time_ms": elapsed_ms,
+                "error": f"HTTP {response.status_code}",
+            }
         return {
             "platform": platform["name"],
             "url": url,
@@ -636,6 +663,15 @@ async def _check_platform_variants(
 
     Le premier élément porte `is_primary=True` : l'appelant s'en sert pour compter les
     plateformes traitées (157) sans compter deux fois les comptes bonus trouvés en plus.
+
+    `platform["retry_sweep"]` (int, défaut 0) : nombre de passages complets supplémentaires
+    tant qu'aucune variante n'est trouvée, avant de conclure à l'absence. Cf. Instagram : sa
+    page de profil sert de façon intermittente soit le rendu SEO server-rendu (marqueur
+    présent), soit un shell générique côté client (marqueur absent) — y compris pour un
+    compte réel et existant. Mesuré empiriquement à ~33 % de chance de marqueur présent par
+    tentative individuelle (échantillon du 2026-07-07, pas une garantie : Meta peut faire
+    varier ce taux à tout moment) ; `retry_sweep=3` (4 tentatives au total) porte la
+    probabilité cumulée de capter un compte réel à ~80 %, sans jamais atteindre 100 %.
     """
     check_fn = platform.get("checker", check_username)
 
@@ -643,11 +679,19 @@ async def _check_platform_variants(
         async with semaphore:
             return v, await check_fn(v, platform, session)
 
-    tasks = [asyncio.create_task(_bounded(v)) for v in variants]
-    results = await asyncio.gather(*tasks)
+    async def _sweep() -> list[tuple[str, dict]]:
+        tasks = [asyncio.create_task(_bounded(v)) for v in variants]
+        return await asyncio.gather(*tasks)
 
     order = {v: i for i, v in enumerate(variants)}
+    results = await _sweep()
     found = sorted((vr for vr in results if vr[1]["found"]), key=lambda vr: order[vr[0]])
+
+    remaining_sweeps = platform.get("retry_sweep", 0)
+    while not found and remaining_sweeps > 0:
+        results = await _sweep()
+        found = sorted((vr for vr in results if vr[1]["found"]), key=lambda vr: order[vr[0]])
+        remaining_sweeps -= 1
 
     if found:
         return [
