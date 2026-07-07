@@ -1978,6 +1978,7 @@ async function addUsernameSearchToInvestigation() {
         const saved = await API.saveUsernameSearch(unameState.username, unameState.results.map((r) => ({
             platform: r.platform, url: r.url, category: r.category,
             found: r.found, response_time_ms: r.response_time_ms, error: r.error,
+            variant: r.variant,
         })));
         openAddToInvestigationModal("username_search", saved.search_id, `Pseudo « ${unameState.username} »`);
     } catch (err) {
@@ -2107,7 +2108,10 @@ async function streamUsernameCheck(username, signal) {
 function onUsernameResult(result) {
     if (!unameState) return;
     unameState.results.push(result);
-    unameState.checked += 1;
+    // "checked" ne progresse que sur le 1er événement d'une plateforme (is_primary) : une
+    // même plateforme peut désormais produire plusieurs comptes trouvés (variantes
+    // différentes), qu'on ne veut pas compter plusieurs fois dans la progression sur 157.
+    if (result.is_primary !== false) unameState.checked += 1;
     if (result.error) unameState.errors += 1;
     else if (result.found) unameState.found += 1;
 
@@ -2139,6 +2143,10 @@ function buildUnameBadge(result) {
     const state = result.error ? "errored" : (result.found ? "found" : "notfound");
     const icon = result.error ? UNAME_SVG.alert : (result.found ? UNAME_SVG.check : UNAME_SVG.x);
     const cat = UNAME_CAT_LABELS[result.category] || result.category;
+    // La variante trouvée peut différer du pseudo saisi (recherche élargie) — on l'affiche
+    // pour ne pas laisser croire que c'est le pseudo exact qui a été confirmé.
+    const isVariant = result.found && result.variant && unameState
+        && result.variant.toLowerCase() !== unameState.username.toLowerCase();
 
     const el = document.createElement(result.found ? "a" : "div");
     el.className = "uname-badge " + state;
@@ -2147,7 +2155,8 @@ function buildUnameBadge(result) {
     if (result.found) { el.href = result.url; el.target = "_blank"; el.rel = "noopener"; }
     el.innerHTML =
         `<div class="uname-head">${icon}<span class="uname-name">${escapeHtml(result.platform)}</span></div>` +
-        `<div class="uname-cat">${escapeHtml(cat)}</div>`;
+        `<div class="uname-cat">${escapeHtml(cat)}</div>` +
+        (isVariant ? `<div class="uname-variant">trouvé comme « ${escapeHtml(result.variant)} »</div>` : "");
     return el;
 }
 
@@ -2210,6 +2219,7 @@ function exportUsernameJson() {
         results: unameState.results.map((r) => ({
             platform: r.platform, url: r.url, category: r.category,
             found: r.found, response_time_ms: r.response_time_ms, error: r.error,
+            variant: r.variant,
         })),
     });
 }

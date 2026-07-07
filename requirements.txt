@@ -18,6 +18,7 @@ pydantic-settings==2.3.4
 # Authentification
 python-jose[cryptography]==3.4.0
 passlib[bcrypt]==1.7.4
+bcrypt==4.0.1  # passlib 1.7.4 est incompatible avec bcrypt>=4.1 (ValueError sur son auto-test interne)
 
 # HTTP asynchrone
 httpx==0.27.0
@@ -52,7 +53,7 @@ redis==5.0.7
 elasticsearch[async]==8.11.0
 
 # Génération de rapports PDF (Module 14 — export forensique)
-reportlab==3.6.8
+reportlab==4.2.5
 
 # Logging
 loguru==0.7.2

@@ -641,6 +641,7 @@ pre.json {
 }
 .uname-badge .uname-name { font-weight: 600; line-height: 1.2; }
 .uname-badge .uname-cat { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.03em; opacity: 0.7; }
+.uname-badge .uname-variant { font-size: 0.72rem; font-style: italic; opacity: 0.85; }
 .uname-badge [data-lucide] { width: 15px; height: 15px; flex-shrink: 0; }
 .uname-badge .uname-head { display: flex; align-items: center; gap: 6px; }
 

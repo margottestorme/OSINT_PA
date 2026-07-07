@@ -248,6 +248,10 @@ class UsernameResult(Base):
     found: Mapped[bool] = mapped_column(Boolean, default=False)
     response_time_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     error: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Variante testée sur cette plateforme (le pseudo saisi ou l'une de ses variantes générées
+    # — séparateurs/ordre/casse/suffixe) ; NULL si le résultat vient d'un ancien run sans
+    # génération de variantes. Toujours l'original si aucune variante n'a matché.
+    matched_variant: Mapped[str | None] = mapped_column(String(30), nullable=True)
     checked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

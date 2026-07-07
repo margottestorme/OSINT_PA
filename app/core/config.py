@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     OTX_API_KEY: str = ""           # Freemium : AlienVault OTX (passive DNS)
     HUNTER_API_KEY: str = ""        # Freemium : vérification d'email
 
+    # --- Clés API énumération de pseudos (Module 15) — optionnelles, gratuites ---
+    YOUTUBE_API_KEY: str = ""       # Google Cloud Console -> YouTube Data API v3 (clé simple)
+    TWITCH_CLIENT_ID: str = ""      # dev.twitch.tv/console/apps -> Client ID
+    TWITCH_CLIENT_SECRET: str = ""  # même app Twitch -> Client Secret
+
+    model_config = {"env_file": ".env", "extra": "ignore"}
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
