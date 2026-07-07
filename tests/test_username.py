@@ -84,10 +84,50 @@ async def test_check_username_soft404_not_found_text():
 
 
 @pytest.mark.asyncio
-async def test_check_username_check_url_used_for_request_url_for_display():
-    # Instagram-like : l'API interrogée (check_url) diffère de la page affichée (url).
+async def test_check_username_found_text():
+    # Symétrique de not_found_text : shell générique 200 sans marqueur d'absence stable, mais
+    # le profil réel contient une preuve de présence (ex : Instagram, Bluesky, Telegram).
     platform = {"name": "Instagram", "url": "https://www.instagram.com/{username}/",
-                "check_url": "https://www.instagram.com/api/v1/users/web_profile_info/?username={username}",
+                "category": "social", "check_method": "found_text",
+                "found_text": "• Instagram photos and videos"}
+    # 200 avec le marqueur de présence -> found
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(200, text="<title>John (@john) • Instagram photos and videos</title>"))
+    async with httpx.AsyncClient(transport=transport) as s:
+        r = await uc.check_username("john", platform, s)
+    assert r["found"] is True
+    assert r["error"] is None
+
+    # 200 sans le marqueur (shell générique, pseudo inexistant) -> not found
+    transport2 = httpx.MockTransport(lambda req: httpx.Response(200, text="<title>Instagram</title>"))
+    async with httpx.AsyncClient(transport=transport2) as s:
+        r2 = await uc.check_username("john", platform, s)
+    assert r2["found"] is False
+    assert r2["error"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 403, 429, 503])
+async def test_check_username_ambiguous_status_reported_as_error(status):
+    # Anti-bot/rate-limit (401/403/429) ou erreur serveur (5xx) : jamais un faux "pas trouvé"
+    # silencieux -> remonté en `error`. Découvert sur Instagram (401 "Please wait a few
+    # minutes" masquant un compte réel, cf. commentaire sur PLATFORMS).
+    platform = {"name": "GitLab", "url": "https://gitlab.com/{username}", "category": "dev",
+                "check_method": "status_code"}
+    transport = httpx.MockTransport(lambda req: httpx.Response(status))
+    async with httpx.AsyncClient(transport=transport) as s:
+        r = await uc.check_username("john", platform, s)
+    assert r["found"] is False
+    assert r["error"] == f"HTTP {status}"
+
+
+@pytest.mark.asyncio
+async def test_check_username_check_url_used_for_request_url_for_display():
+    # Mécanisme générique (plus utilisé par aucune plateforme active depuis Instagram
+    # le 2026-07-07, cf. son commentaire dans PLATFORMS) : l'API interrogée (check_url)
+    # peut différer de la page affichée (url).
+    platform = {"name": "ExempleAPI", "url": "https://www.example.com/{username}/",
+                "check_url": "https://api.example.com/v1/users/?username={username}",
                 "category": "social", "check_method": "status_code"}
     requested_urls = []
 
@@ -98,8 +138,8 @@ async def test_check_username_check_url_used_for_request_url_for_display():
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as s:
         r = await uc.check_username("john", platform, s)
 
-    assert requested_urls == ["https://www.instagram.com/api/v1/users/web_profile_info/?username=john"]
-    assert r["url"] == "https://www.instagram.com/john/"  # page humaine, pas l'API
+    assert requested_urls == ["https://api.example.com/v1/users/?username=john"]
+    assert r["url"] == "https://www.example.com/john/"  # page humaine, pas l'API
     assert r["found"] is True
 
 
@@ -251,7 +291,9 @@ def test_normalize_username_strip_and_case_preserved():
 def test_platform_registry():
     # 157 définies au total (voir ALL_PLATFORM_DEFINITIONS) ; 59 désactivées (reliable=False :
     # audit du 2026-07-07 en 2 vagues + RubyGems/NameMC détectés par
-    # scripts/audit_username_platforms.py) ; Instagram réparée via check_url -> 98 actives.
+    # scripts/audit_username_platforms.py) ; Instagram réparée via found_text (page de profil
+    # server-rendue pour le SEO) après l'abandon de l'API check_url, trop vite rate-limitée
+    # -> 98 actives.
     assert uc.PLATFORM_COUNT == 98
     assert len(uc.ALL_PLATFORM_DEFINITIONS) == 157
     names = [p["name"] for p in uc.PLATFORMS]
@@ -378,6 +420,73 @@ async def test_check_platform_variants_none_found_falls_back_to_original():
     assert results[0]["found"] is False
     assert results[0]["variant"] == "margotte.storme"  # repli sur l'originale
     assert results[0]["is_primary"] is True
+
+
+@pytest.mark.asyncio
+async def test_check_platform_variants_retry_sweep_recovers_intermittent_miss():
+    # Instagram sert de façon intermittente un shell générique même pour un compte réel
+    # (cf. commentaire sur PLATFORMS) : retry_sweep=3 relance jusqu'à 3 passages complets
+    # supplémentaires si rien n'est trouvé, pour rattraper ce type de faux négatif.
+    platform = {"name": "Instagram", "url": "https://instagram.example/{username}",
+                "category": "social", "check_method": "found_text", "retry_sweep": 3}
+    variants = ["steven.gausset", "stevengausset"]
+    call_count = {"stevengausset": 0}
+
+    async def fake_check(v, p, s):
+        found = False
+        if v == "stevengausset":
+            call_count["stevengausset"] += 1
+            found = call_count["stevengausset"] >= 3  # raté 2 fois, trouvé au 3e passage
+        return {"platform": "Instagram", "url": p["url"].format(username=v), "category": "social",
+                "found": found, "response_time_ms": 1.0, "error": None}
+
+    with patch.object(uc, "check_username", side_effect=fake_check):
+        results = await uc._check_platform_variants(variants, platform, None, asyncio.Semaphore(5))
+
+    assert len(results) == 1
+    assert results[0]["found"] is True
+    assert results[0]["variant"] == "stevengausset"
+    assert call_count["stevengausset"] == 3  # bien trois passages effectués
+
+
+@pytest.mark.asyncio
+async def test_check_platform_variants_retry_sweep_stops_after_exhausting_attempts():
+    # Si le compte n'existe vraiment nulle part : épuise les 3 passages supplémentaires
+    # (4 tentatives au total) puis conclut à l'absence, sans boucler indéfiniment.
+    platform = {"name": "Instagram", "url": "https://instagram.example/{username}",
+                "category": "social", "check_method": "found_text", "retry_sweep": 3}
+    variants = ["ghost.user"]
+    calls = []
+
+    async def fake_check(v, p, s):
+        calls.append(v)
+        return {"platform": "Instagram", "url": p["url"].format(username=v), "category": "social",
+                "found": False, "response_time_ms": 1.0, "error": None}
+
+    with patch.object(uc, "check_username", side_effect=fake_check):
+        results = await uc._check_platform_variants(variants, platform, None, asyncio.Semaphore(5))
+
+    assert len(calls) == 4  # 1 passage initial + 3 relances
+    assert results[0]["found"] is False
+
+
+@pytest.mark.asyncio
+async def test_check_platform_variants_no_retry_sweep_by_default():
+    # Sans le flag retry_sweep sur la plateforme : un seul passage, pas de seconde chance.
+    platform = {"name": "X", "url": "https://x.example/{username}", "category": "social",
+                "check_method": "status_code"}
+    variants = ["margotte.storme", "margottestorme"]
+    calls = []
+
+    async def fake_check(v, p, s):
+        calls.append(v)
+        return {"platform": "X", "url": p["url"].format(username=v), "category": "social",
+                "found": False, "response_time_ms": 1.0, "error": None}
+
+    with patch.object(uc, "check_username", side_effect=fake_check):
+        await uc._check_platform_variants(variants, platform, None, asyncio.Semaphore(5))
+
+    assert len(calls) == len(variants)  # un seul passage, pas de doublon
 
 
 @pytest.mark.asyncio
