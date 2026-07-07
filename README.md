@@ -441,56 +441,141 @@ L'ensemble des exigences du cahier des charges est couvert : recherche/corrélat
 - **Graphe global vide (422)** : la borne `limit` max des endpoints de liste (`persons`, `correlations`, `emails`, `sites`, `history`) est passée à **500** — le graphe charge `limit=200` et recevait un `422` (persons était plafonné à 100), ce qui vidait le graphe.
 - **Source scraper cassée** : `_source_scraper(entity, entity_type)` est désormais enregistrée dans le registre `SOURCES` via des **lambdas** passant l'`entity_type` (`lambda e: _source_scraper(e, "domain")`…), corrigeant `missing 1 required positional argument: 'entity_type'` à chaque recherche.
 
-## Prérequis
+## Installation & Lancement
 
-- Python 3.11+
-- Docker et Docker Compose (pour le déploiement complet)
-- PostgreSQL 15 (ou SQLite pour le développement local)
-- CMake + g++ (pour la compilation de dlib)
-- Elasticsearch 8.x (**optionnel** — recherche full-text ; l'app fonctionne sans)
+Deux méthodes sont possibles. Choisissez-en **une seule**.
 
-## Installation
+> ### ⚠️ À lire avant de commencer
+> **Le projet utilise PostgreSQL en local par défaut (pas dans Docker).** Le fichier
+> `.env.example` est pré-réglé pour un PostgreSQL tournant sur `localhost` (→ **Option B**).
+> Le `docker-compose.yml` inclut *aussi* un service PostgreSQL si vous préférez **tout**
+> faire tourner via Docker (→ **Option A**) : dans ce cas, les URL de connexion doivent
+> viser les **noms de services Docker** (`db`, `redis`, `elasticsearch`) et non `localhost`.
 
-### Avec Docker (recommandé)
+Prérequis commun : **Git**, et le port **8000** libre.
+
+---
+
+### Option A — Docker (recommandé, tout-en-un)
+
+Lance en une commande l'application **et** toutes ses dépendances (PostgreSQL, Redis,
+Elasticsearch). Idéal pour une évaluation rapide.
+
+**Prérequis :** [Docker](https://docs.docker.com/get-docker/) + Docker Compose v2.
 
 ```bash
+# 1. Récupérer le projet
 git clone https://github.com/margottestorme/OSINT_PA.git
 cd OSINT_PA/osint-platform
 
-# Configurer l'environnement
+# 2. Créer le fichier d'environnement
 cp .env.example .env
-# Éditer .env avec vos valeurs (JWT_SECRET_KEY notamment)
 
-# Lancer les services
-docker compose up -d
+# 3. IMPORTANT — dans .env, faire pointer les services vers les conteneurs Docker
+#    (à l'intérieur du réseau Docker, "localhost" désigne le conteneur lui-même) :
+#      DATABASE_URL=postgresql+asyncpg://osint_user:osint_pass@db:5432/osint_db
+#      DATABASE_URL_SYNC=postgresql://osint_user:osint_pass@db:5432/osint_db
+#      REDIS_URL=redis://redis:6379/0
+#      ELASTICSEARCH_URL=http://elasticsearch:9200
+#    et définir une vraie JWT_SECRET_KEY + DB_ENCRYPTION_KEY (ex : openssl rand -hex 32)
 
-# Vérifier le statut
-curl http://localhost:8000/health
+# 4. Construire et démarrer toute la stack (app + db + redis + elasticsearch)
+docker compose up -d --build
+
+# 5. Appliquer les migrations de schéma
+docker compose exec app alembic upgrade head
+
+# 6. (Optionnel) Charger le jeu de données de démonstration
+docker compose exec app python scripts/seed_demo.py
+
+# 7. Vérifier que tout répond
+curl http://localhost:8000/health          # → {"status":"ok"}
 ```
 
-### En local (développement)
+Application accessible sur **http://localhost:8000/login** — identifiants démo **admin / osint2024**.
 
 ```bash
+# Suivre les logs / arrêter
+docker compose logs -f app
+docker compose down            # ajouter -v pour supprimer aussi les volumes (données)
+```
+
+---
+
+### Option B — Installation locale (développement)
+
+L'application tourne sur la machine hôte, avec un **PostgreSQL installé localement**.
+C'est le mode par défaut de `.env.example` et le plus pratique pour développer.
+
+**Prérequis :**
+- **Python 3.11+**
+- **PostgreSQL 15** installé et démarré localement
+- **CMake + g++** (compilation de `dlib`, utilisé par la reconnaissance faciale)
+- *(optionnel)* **Elasticsearch 8.x** — recherche full-text ; l'app fonctionne sans (dégradation propre)
+
+```bash
+# --- Dépendances système (Debian/Ubuntu) ---
+sudo apt-get update && sudo apt-get install -y \
+    python3-venv python3-dev build-essential cmake g++ libpq-dev postgresql
+
+# 1. Récupérer le projet
 git clone https://github.com/margottestorme/OSINT_PA.git
 cd OSINT_PA/osint-platform
+```
 
-# Environnement virtuel
+**2. Créer la base de données PostgreSQL** (utilisateur, base, droits) :
+
+```bash
+sudo -u postgres psql <<'SQL'
+CREATE USER osint_user WITH PASSWORD 'osint_pass';
+CREATE DATABASE osint_db OWNER osint_user;
+GRANT ALL PRIVILEGES ON DATABASE osint_db TO osint_user;
+-- pgcrypto (Module 12 — chiffrement au repos) : activé automatiquement par les migrations,
+-- mais requiert que l'utilisateur puisse créer l'extension. En cas de refus, l'activer en superuser :
+\connect osint_db
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+SQL
+```
+
+> Les identifiants ci-dessus (`osint_user` / `osint_pass` / `osint_db`) correspondent
+> **exactement** aux valeurs par défaut de `.env.example`. Si vous les changez, mettez
+> `DATABASE_URL` et `DATABASE_URL_SYNC` à jour en conséquence.
+
+**3. Configurer l'environnement :**
+
+```bash
+cp .env.example .env
+# Éditer .env : garder les hôtes en "localhost", puis définir impérativement
+#   JWT_SECRET_KEY et DB_ENCRYPTION_KEY  (ex : openssl rand -hex 32)
+# Les clés API OSINT (GITHUB_TOKEN, VIRUSTOTAL_API_KEY…) sont optionnelles (vide = source désactivée).
+```
+
+**4. Installer les dépendances Python :**
+
+```bash
 python3 -m venv venv
 source venv/bin/activate
-
-# Dépendances
 pip install -r requirements.txt
-python -m spacy download fr_core_news_sm
-
-# Configuration
-cp .env.example .env
-
-# Migrations de base de données
-alembic upgrade head
-
-# Lancement
-uvicorn app.main:app --reload
+python -m spacy download fr_core_news_sm   # modèle NLP français (extraction d'entités)
 ```
+
+**5. Appliquer les migrations et charger les données de démo :**
+
+```bash
+alembic upgrade head              # crée le schéma (tables + extension pgcrypto)
+python3 scripts/seed_demo.py      # jeu de démo : 3 personnes, 6 recherches, 1 enquête pré-remplie…
+```
+
+**6. Lancer l'application :**
+
+```bash
+bash scripts/start_demo.sh        # vérifie PostgreSQL → migrations → uvicorn --reload → affiche l'URL
+```
+
+Application accessible sur **http://localhost:8000/login** — identifiants démo **admin / osint2024**.
+
+> 💡 Le script `start_demo.sh` relance le serveur avec `--reload` (rechargement à chaud).
+> Évitez de lancer `uvicorn` « à la main » sans `--reload` : le code modifié ne serait pas pris en compte.
 
 ## Configuration (.env)
 
