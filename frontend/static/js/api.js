@@ -177,6 +177,14 @@ const API = (() => {
         return _request("PATCH", "/api/persons/" + personId, { json: body });
     }
 
+    async function addPersonEmail(personId, email, source = "manual") {
+        return _request("POST", "/api/persons/" + personId + "/emails", { json: { email, source } });
+    }
+
+    async function enrichPerson(personId) {
+        return _request("POST", "/api/persons/" + personId + "/enrich");
+    }
+
     // --- Enquêtes (Module 14) ---
     async function listInvestigations(status = "") {
         const params = new URLSearchParams();
@@ -272,6 +280,8 @@ const API = (() => {
         streamAnalyze,
         getStats,
         updatePerson,
+        addPersonEmail,
+        enrichPerson,
         listInvestigations,
         getInvestigation,
         createInvestigation,

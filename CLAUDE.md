@@ -33,7 +33,7 @@ profondeur — c'est la meilleure source pour comprendre le *pourquoi* de chaque
 |---|---|---|
 | Backend | FastAPI 0.111 + uvicorn (async) | point d'entrée [app/main.py](app/main.py) |
 | ORM / DB | SQLAlchemy 2.0 (async, `Mapped[...]`) + PostgreSQL 15 | SQLite (aiosqlite) en tests |
-| Migrations | Alembic (`alembic/versions/`, 8 révisions) | jamais de `create_all` en prod |
+| Migrations | Alembic (`alembic/versions/`, 12 révisions) | jamais de `create_all` en prod |
 | Auth | python-jose (JWT HS256, 15-60 min) + passlib/bcrypt | rôles `admin` / `analyst` |
 | NLP | spaCy `fr_core_news_sm` | extraction emails/domaines/noms |
 | Reconnaissance faciale | face_recognition + dlib + Pillow | embedding 128D, aucune image persistée |
@@ -171,6 +171,8 @@ python -m app.cli create-user --username admin --role admin
 python scripts/reindex.py                            # réindexation PostgreSQL → Elasticsearch
 python scripts/seed_demo.py                           # jeu de données de démo (idempotent)
 python scripts/reset_demo.py                           # reset des données de démo
+python scripts/audit_username_platforms.py            # audit fiabilité registre pseudos (Module 15)
+python scripts/seed_lfw_dataset.py --limit 50          # jeu de données académique LFW (facial)
 
 # Migrations
 alembic revision -m "message" --autogenerate
@@ -212,6 +214,28 @@ config dédiée) — l'AUDIT.md recommande d'en ajouter en CI mais ce n'est pas 
   contourner ce comportement, l'étendre plutôt (ex. à `DB_ENCRYPTION_KEY`) si on durcit encore.
 - **Ordre des middlewares** dans [app/main.py](app/main.py) est significatif (`SecurityHeaders` le
   plus externe pour couvrir même les 429) — ne pas réordonner sans relire le commentaire associé.
+
+### Reconnaissance faciale : refus délibéré de la recherche inversée sur bases publiques
+
+Une demande de faire matcher tout visage envoyé contre des « bases de données publiques et
+open-source avec recherche inversée » (2026-07-07) a été **refusée** : ça décrit précisément le
+fonctionnement de Clearview AI (scraping continu du web pour identifier n'importe quel inconnu à
+partir d'une photo), jugé illégal et sanctionné par la CNIL (20M€) et plusieurs autorités
+européennes — indépendamment du cadre académique du projet, puisque ça viserait de vraies
+personnes non consentantes. Ne pas réintroduire cette fonctionnalité sans en rediscuter
+explicitement.
+
+À la place : `Person.source` (`investigation` par défaut / `lfw_dataset`) distingue les vraies
+personnes ajoutées via la plateforme des entrées issues du jeu de données académique **Labeled
+Faces in the Wild** (Huang et al., UMass Amherst TR 07-49, 2007 — benchmark standard utilisé
+jusque dans `sklearn.datasets.fetch_lfw_people`), seedées via
+[scripts/seed_lfw_dataset.py](scripts/seed_lfw_dataset.py). Différence clé avec un reverse-search
+public : les photos LFW sont un jeu figé collecté une fois par les auteurs originaux (pas un
+scraping continu de cibles choisies), et servent uniquement à démontrer un matching contre une
+base élargie. Toute réponse API/UI impliquant une entrée `lfw_dataset` doit rester visuellement
+distincte d'un vrai résultat d'enquête (badge ambre `.lfw-badge` en frontend, colonne « Origine »
+dans le rapport PDF forensique, pas d'enrichissement OSINT automatique déclenché) — ne jamais
+fusionner les deux dans l'UI ou supprimer cette distinction pour « simplifier ».
 
 ## Ce qu'il reste à faire / roadmap
 

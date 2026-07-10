@@ -30,6 +30,9 @@ htmlcov/
 *.swp
 *.swo
 
+# Config locale d'outil (permissions/settings Claude Code) — pas du code projet
+.claude/
+
 # Docker volumes
 pgdata/
 

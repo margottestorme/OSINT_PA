@@ -28,6 +28,23 @@ validate_security(settings)
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 
+class NoCacheStaticFiles(StaticFiles):
+    """StaticFiles qui force la revalidation à chaque requête (Cache-Control: no-cache).
+
+    Starlette gère déjà ETag/Last-Modified (le navigateur envoie If-None-Match, reçoit un
+    304 si rien n'a changé — donc pas de re-téléchargement inutile), mais SANS en-tête
+    Cache-Control explicite, certains navigateurs appliquent un cache heuristique et
+    servent un JS/CSS obsolète sans même revalider auprès du serveur. Projet sans étape de
+    build (pas de hash de version dans les noms de fichiers) : plusieurs itérations sur
+    app.js dans une même session de dev ont fini par servir une version périmée malgré un
+    rechargement forcé côté navigateur (2026-07-09) — `no-cache` élimine la classe de bug.
+    """
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Cycle de vie applicatif — initialise Elasticsearch (Module 11) en best-effort.
@@ -75,7 +92,7 @@ app.include_router(stream_router)
 app.include_router(investigation_router)
 app.include_router(username_router)
 
-app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR / "static")), name="static")
+app.mount("/static", NoCacheStaticFiles(directory=str(FRONTEND_DIR / "static")), name="static")
 
 
 # --- Pages frontend ---

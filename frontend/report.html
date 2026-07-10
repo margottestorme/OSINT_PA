@@ -75,6 +75,7 @@
                         </div>
                         <div class="flex gap-8">
                             <button class="btn btn-ghost btn-sm" id="person-usernames"><i data-lucide="at-sign"></i> Rechercher ses pseudos</button>
+                            <button class="btn btn-ghost btn-sm" id="person-enrich" title="Pivote sur les emails connus (WHOIS/DNS/sources OSINT) pour trouver de nouveaux emails/sites"><i data-lucide="zap"></i> Enrichir</button>
                             <button class="btn btn-ghost btn-sm" id="person-edit"><i data-lucide="edit-3"></i> Editer</button>
                         </div>
                     </div>
@@ -100,6 +101,10 @@
                     </div>
 
                     <div class="tab-panel active" id="panel-emails">
+                        <form id="add-email-form" class="flex gap-8" style="margin-bottom:16px;">
+                            <input class="input" type="email" id="add-email-input" placeholder="nouvel-email@exemple.com" required style="max-width:320px;">
+                            <button class="btn btn-primary btn-sm" type="submit"><i data-lucide="plus"></i> Ajouter</button>
+                        </form>
                         <div class="table-wrap"><table><thead><tr><th>Email</th><th>Source</th><th>Date</th><th></th></tr></thead>
                             <tbody id="emails-body"></tbody></table></div>
                         <div id="emails-empty" class="empty-state hidden"><div class="empty-icon"><i data-lucide="mail-x"></i></div><h3>Aucun email</h3></div>

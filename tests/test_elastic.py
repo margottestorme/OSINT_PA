@@ -36,6 +36,7 @@ def make_fake_es(ping=True, exists=False):
     client.indices = MagicMock()
     client.indices.exists = AsyncMock(return_value=exists)
     client.indices.create = AsyncMock()
+    client.indices.put_mapping = AsyncMock()
     return client
 
 
@@ -116,6 +117,8 @@ async def test_create_indices_skips_existing():
     ec._client = make_fake_es(ping=True, exists=True)
     await ec.create_indices()
     ec._client.indices.create.assert_not_called()
+    # Mapping complété (ex : nouveau champ `source`) même si l'index existe déjà.
+    assert ec._client.indices.put_mapping.await_count == len(INDEX_MAPPINGS)
 
 
 # =============================================================
@@ -126,7 +129,7 @@ async def test_create_indices_skips_existing():
 async def test_index_person_document_without_biometrics(es_client):
     person = SimpleNamespace(
         id=7, first_name="Jean", last_name="Dupont", notes="vip",
-        confidence_score=0.8, created_at=NOW,
+        confidence_score=0.8, source="investigation", created_at=NOW,
         embedding=[0.1] * 128, image_hash="deadbeef" * 8,  # NE doivent PAS fuiter
     )
     assert await index_person(person) is True
@@ -137,7 +140,7 @@ async def test_index_person_document_without_biometrics(es_client):
     assert "embedding" not in doc and "image_hash" not in doc
     assert doc == {
         "id": "7", "first_name": "Jean", "last_name": "Dupont", "notes": "vip",
-        "confidence_score": 0.8, "created_at": NOW.isoformat(),
+        "confidence_score": 0.8, "source": "investigation", "created_at": NOW.isoformat(),
     }
 
 
@@ -180,7 +183,7 @@ async def test_index_site_maps_discovered_at(es_client):
 async def test_index_person_es_down_returns_false():
     # _client déjà None (fixture autouse) → dégradation propre
     person = SimpleNamespace(id=1, first_name="A", last_name="B", notes=None,
-                             confidence_score=1.0, created_at=NOW)
+                             confidence_score=1.0, source="investigation", created_at=NOW)
     assert await index_person(person) is False
 
 
@@ -188,7 +191,7 @@ async def test_index_person_es_down_returns_false():
 async def test_index_error_returns_false(es_client):
     es_client.index = AsyncMock(side_effect=RuntimeError("boom"))
     person = SimpleNamespace(id=1, first_name="A", last_name="B", notes=None,
-                             confidence_score=1.0, created_at=NOW)
+                             confidence_score=1.0, source="investigation", created_at=NOW)
     assert await index_person(person) is False
 
 
@@ -231,8 +234,10 @@ async def test_bulk_reindex_es_down_returns_unavailable():
 @pytest.mark.asyncio
 async def test_bulk_reindex_indexes_all_types(es_client):
     persons = [
-        SimpleNamespace(id=1, first_name="A", last_name="B", notes=None, confidence_score=1.0, created_at=NOW),
-        SimpleNamespace(id=2, first_name="C", last_name="D", notes="n", confidence_score=0.5, created_at=NOW),
+        SimpleNamespace(id=1, first_name="A", last_name="B", notes=None, confidence_score=1.0,
+                        source="investigation", created_at=NOW),
+        SimpleNamespace(id=2, first_name="C", last_name="D", notes="n", confidence_score=0.5,
+                        source="lfw_dataset", created_at=NOW),
     ]
     results = [SimpleNamespace(id=1, search_id=1, source="s", entity="e",
                               entity_type="domain", extracted={"emails": ["a@b"]}, created_at=NOW)]

@@ -32,6 +32,10 @@ class PersonResponse(PersonBase):
     id: int
     confidence_score: float
     notes: str | None = None
+    # "investigation" (défaut) ou "lfw_dataset" (jeu de données académique public) — voir
+    # CLAUDE.md. Le rapport PDF forensique doit distinguer clairement les deux, une entrée
+    # lfw_dataset n'ayant aucune valeur probante d'enquête réelle.
+    source: str = "investigation"
     created_at: datetime
     model_config = {"from_attributes": True}
 
@@ -46,6 +50,15 @@ class EmailResponse(EmailBase):
     person_id: int | None
     created_at: datetime
     model_config = {"from_attributes": True}
+
+class EmailAddRequest(BaseModel):
+    """Rattachement manuel d'un email à une personne (point de départ de l'enrichissement)."""
+    email: str = Field(..., min_length=5, max_length=255)
+    source: str = Field(default="manual", max_length=255)
+
+class EnrichResponse(BaseModel):
+    message: str
+    person_id: int
 
 
 # --- Site ---
@@ -149,6 +162,9 @@ class FaceUploadResponse(BaseModel):
     is_new: bool
     confidence_score: float
     faces_count: int
+    # "investigation" (personne réelle ajoutée via la plateforme) ou "lfw_dataset" (jeu de
+    # données académique public — voir CLAUDE.md). Distingue les deux dans l'UI, jamais confondu.
+    source: str = "investigation"
 
 class FacePersonResponse(BaseModel):
     id: int
@@ -157,6 +173,7 @@ class FacePersonResponse(BaseModel):
     confidence_score: float
     has_embedding: bool
     notes: str | None = None
+    source: str = "investigation"
     created_at: datetime
     model_config = {"from_attributes": True}
 
@@ -171,6 +188,7 @@ class StreamFaceResult(BaseModel):
     name: str | None = None
     confidence: float | None = None
     is_new: bool
+    source: str | None = None  # "investigation" / "lfw_dataset" — None si is_new
 
 class StreamAnalyzeResponse(BaseModel):
     faces: list[StreamFaceResult]

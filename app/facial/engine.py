@@ -107,7 +107,8 @@ def locate_and_encode(image_bytes: bytes) -> list[dict]:
 def compare_embedding(
     embedding: list[float],
     db_embeddings: list[tuple[int, list[float]]],
-    threshold: float = 0.6,
+    threshold: float = 0.55,
+    min_margin: float = 0.03,
 ) -> tuple[int, float] | None:
     """Compare un embedding contre ceux en base via distance euclidienne.
 
@@ -115,32 +116,54 @@ def compare_embedding(
         embedding: vecteur 128 floats du visage à identifier
         db_embeddings: liste de (person_id, embedding) depuis la DB
         threshold: distance maximale pour un match (plus bas = plus strict)
+        min_margin: écart minimal exigé entre le meilleur match et le meilleur match
+            appartenant à une AUTRE personne — rejette les cas ambigus plutôt que de
+            deviner. Nécessaire car les distances intra-personne (mêmes gens, photos
+            différentes) et inter-personnes (personnes différentes) SE CHEVAUCHENT dès
+            que la base dépasse quelques dizaines d'identités : mesuré empiriquement sur
+            le jeu LFW (2026-07-09), certaines paires de personnes différentes sont plus
+            proches (~0.50) que certaines paires de la MÊME personne sur deux photos
+            (~0.60) — aucun seuil unique ne les sépare parfaitement. Sans cette marge, le
+            meilleur candidat gagne même quand un autre est presque aussi proche, d'où de
+            faux positifs (mauvais nom affiché) plutôt qu'un "inconnu" honnête.
 
     Returns:
-        (person_id, score) du meilleur match, ou None si aucun match.
+        (person_id, score) du meilleur match, ou None si aucun match ou match ambigu.
     """
     if not db_embeddings:
         logger.info("[compare_embedding] Aucun embedding en base — pas de comparaison")
         return None
 
     target = np.array(embedding)
-    best_match: tuple[int, float] | None = None
-
+    # Meilleure distance par personne (plusieurs embeddings peuvent appartenir à la même
+    # personne — ne pas les traiter comme des candidats concurrents entre eux).
+    best_by_person: dict[int, float] = {}
     for person_id, db_emb in db_embeddings:
         distance = float(np.linalg.norm(target - np.array(db_emb)))
+        if person_id not in best_by_person or distance < best_by_person[person_id]:
+            best_by_person[person_id] = distance
 
-        if distance < threshold:
-            if best_match is None or distance < best_match[1]:
-                best_match = (person_id, round(distance, 4))
+    ranked = sorted(best_by_person.items(), key=lambda kv: kv[1])
+    best_person_id, best_dist = ranked[0]
 
-    if best_match:
-        logger.info(
-            f"[compare_embedding] Match trouvé — person_id={best_match[0]}, distance={best_match[1]}"
-        )
-    else:
+    if best_dist >= threshold:
         logger.info(f"[compare_embedding] Aucun match sous le seuil {threshold}")
+        return None
 
-    return best_match
+    if len(ranked) > 1:
+        second_dist = ranked[1][1]
+        if (second_dist - best_dist) < min_margin:
+            logger.info(
+                f"[compare_embedding] Match ambigu rejeté — person_id={best_person_id} "
+                f"(distance={best_dist:.4f}) trop proche du 2e candidat "
+                f"person_id={ranked[1][0]} (distance={second_dist:.4f}, marge<{min_margin})"
+            )
+            return None
+
+    logger.info(
+        f"[compare_embedding] Match trouvé — person_id={best_person_id}, distance={best_dist}"
+    )
+    return (best_person_id, round(best_dist, 4))
 
 
 def process_image(image_bytes: bytes, image_hash: str) -> dict:

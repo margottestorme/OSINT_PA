@@ -148,6 +148,7 @@ async def collect_report_data(db: AsyncSession, investigation_id: int) -> Report
         "id": p.id, "name": f"{p.first_name} {p.last_name}".strip(),
         "confidence_score": p.confidence_score, "created_at": p.created_at,
         "notes": notes_by_key.get(("person", p.id)),
+        "source": p.source,
     } for p in persons]
     emails_d = [{
         "id": e.id, "email": e.email, "source": e.source,
@@ -463,10 +464,14 @@ def _entities_sections(data, st):
 
     story += _section(
         f"Personnes ({len(data.persons)})",
-        ["ID", "Nom", "Score de confiance", "Découverte (UTC)"],
-        [[p["id"], p["name"], f"{p['confidence_score']:.2f}", _iso(p["created_at"])]
+        ["ID", "Nom", "Score de confiance", "Origine", "Découverte (UTC)"],
+        [[p["id"], p["name"], f"{p['confidence_score']:.2f}",
+          # "Origine" distingue une vraie découverte d'enquête d'une entrée du jeu de données
+          # académique LFW (Module 15bis) — celle-ci n'a AUCUNE valeur probante d'enquête.
+          "Jeu de données LFW (démo)" if p.get("source") == "lfw_dataset" else "Enquête",
+          _iso(p["created_at"])]
          for p in data.persons],
-        [1.2 * cm, 6 * cm, 3 * cm, 5.3 * cm],
+        [1.1 * cm, 4.8 * cm, 2.3 * cm, 3.7 * cm, 3.8 * cm],
     )
     story += _section(
         f"Emails ({len(data.emails)})",

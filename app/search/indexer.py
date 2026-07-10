@@ -48,6 +48,7 @@ def _person_doc(person: Person) -> dict:
         "last_name": person.last_name,
         "notes": person.notes,
         "confidence_score": person.confidence_score,
+        "source": person.source,
         "created_at": _iso(person.created_at),
     }
 

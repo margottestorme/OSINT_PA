@@ -148,6 +148,41 @@ def test_compare_embedding_picks_closest():
     assert result[0] == 2  # person_id 2 est le plus proche
 
 
+def _offset_vector(offset: float) -> list[float]:
+    """Vecteur nul sauf la 1re dimension : distance euclidienne au vecteur nul = `offset`
+    exactement, ce qui permet de calibrer précisément des écarts pour tester la marge."""
+    return [offset] + [0.0] * 127
+
+
+def test_compare_embedding_ambiguous_match_rejected():
+    # Deux personnes différentes presque aussi proches l'une que l'autre (écart < marge) :
+    # mieux vaut "inconnu" qu'un faux positif — voir le commentaire sur `min_margin` dans
+    # app/facial/engine.py (collisions mesurées empiriquement sur le jeu LFW, 2026-07-09).
+    target = [0.0] * 128
+    db = [(1, _offset_vector(0.30)), (2, _offset_vector(0.31))]  # écart de 0.01 < marge
+    result = compare_embedding(target, db, threshold=0.6, min_margin=0.03)
+    assert result is None
+
+
+def test_compare_embedding_clear_winner_not_rejected_by_margin():
+    # Même si un 2e candidat existe, un écart suffisant avec le meilleur n'est pas ambigu.
+    target = [0.0] * 128
+    db = [(1, _offset_vector(0.20)), (2, _offset_vector(0.55))]  # écart de 0.35 >> marge
+    result = compare_embedding(target, db, threshold=0.6, min_margin=0.03)
+    assert result is not None
+    assert result[0] == 1
+
+
+def test_compare_embedding_margin_ignores_same_person_multiple_embeddings():
+    # Plusieurs embeddings de la MÊME personne (ex : plusieurs photos) ne doivent jamais
+    # se faire concurrence entre eux pour le calcul de la marge d'ambiguïté.
+    target = [0.0] * 128
+    db = [(1, _offset_vector(0.20)), (1, _offset_vector(0.21)), (1, _offset_vector(0.22))]
+    result = compare_embedding(target, db, threshold=0.6, min_margin=0.03)
+    assert result is not None
+    assert result[0] == 1
+
+
 # =============================================================
 # process_image
 # =============================================================

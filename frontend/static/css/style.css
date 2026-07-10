@@ -675,6 +675,22 @@ pre.json {
 /* Masquage par filtre (catégorie / uniquement trouvés) */
 .uname-badge.filtered { display: none; }
 
+/* Jeu de données académique LFW (reconnaissance faciale) : jamais confondu visuellement
+   avec une vraie personne investiguée (voir CLAUDE.md, section reconnaissance faciale) */
+.lfw-badge {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #b45309;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 4px;
+    padding: 1px 6px;
+    vertical-align: middle;
+}
+
 /* Résumé final */
 .uname-summary-icon {
     width: 48px; height: 48px; border-radius: 12px; display: grid; place-items: center;
