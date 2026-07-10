@@ -89,19 +89,27 @@ async def stream_analyze(
 
     # Charge les visages connus seulement s'il y a des visages à identifier
     name_by_id: dict[int, str] = {}
+    source_by_id: dict[int, str] = {}
     db_embeddings: list[tuple[int, list[float]]] = []
     if faces:
         rows = (await db.execute(
-            select(Person.id, Person.first_name, Person.last_name, Person.embedding)
+            select(Person.id, Person.first_name, Person.last_name, Person.embedding, Person.source)
             .where(Person.embedding.is_not(None))
         )).all()
-        for pid, first, last, emb in rows:
+        for pid, first, last, emb, source in rows:
             name_by_id[pid] = f"{first} {last}".strip()
+            source_by_id[pid] = source
             db_embeddings.append((pid, emb))
+
+    from app.core.config import get_settings
+    settings = get_settings()
 
     results: list[dict] = []
     for face in faces:
-        match = compare_embedding(face["embedding"], db_embeddings)
+        match = compare_embedding(
+            face["embedding"], db_embeddings,
+            threshold=settings.FACE_MATCH_THRESHOLD, min_margin=settings.FACE_MATCH_MIN_MARGIN,
+        )
         if match:
             pid, distance = match
             results.append({
@@ -110,11 +118,13 @@ async def stream_analyze(
                 "name": name_by_id.get(pid),
                 "confidence": round(1.0 - distance, 4),
                 "is_new": False,
+                "source": source_by_id.get(pid),
             })
         else:
             results.append({
                 "location": face["location"],
                 "person_id": None, "name": None, "confidence": None, "is_new": True,
+                "source": None,
             })
 
     processing_ms = round((time.perf_counter() - t0) * 1000, 2)

@@ -46,6 +46,12 @@ class Person(Base):
     embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
     image_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     notes: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)  # chiffré au repos (Module 12)
+    # "investigation" (défaut) : personne réelle ajoutée via la plateforme (upload/stream) —
+    # traitement RGPD standard du projet. "lfw_dataset" : entrée issue du jeu de données
+    # académique public Labeled Faces in the Wild (scripts/seed_lfw_dataset.py), utilisée
+    # uniquement pour démontrer un matching contre une base élargie sans jamais identifier
+    # de vraie personne non consentante (voir CLAUDE.md, section reconnaissance faciale).
+    source: Mapped[str] = mapped_column(String(20), default="investigation")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

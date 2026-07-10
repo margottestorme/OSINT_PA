@@ -71,6 +71,7 @@ async def upload_face(
             is_new=False,
             confidence_score=duplicate.confidence_score,
             faces_count=1,
+            source=duplicate.source,
         )
 
     # Traitement de l'image (validation format + détection + embedding)
@@ -88,7 +89,12 @@ async def upload_face(
     )
     db_embeddings = [(row[0], row[1]) for row in db_result.all()]
 
-    match = compare_embedding(result["embedding"], db_embeddings)
+    from app.core.config import get_settings
+    settings = get_settings()
+    match = compare_embedding(
+        result["embedding"], db_embeddings,
+        threshold=settings.FACE_MATCH_THRESHOLD, min_margin=settings.FACE_MATCH_MIN_MARGIN,
+    )
 
     # Indexation ES de la personne (créée ou mise à jour) en tâche de fond
     from app.search.indexer import index_person
@@ -105,17 +111,22 @@ async def upload_face(
 
         logger.info(
             f"[faces/upload] Match trouvé — person_id={person_id}, "
-            f"distance={score}, confidence={confidence}"
+            f"distance={score}, confidence={confidence}, source={person.source}"
         )
         await create_audit_log(db, "face_upload", target=f"person_id={person_id},is_new=false", user_id=user_id, ip_address=ip)
         if background_tasks:
-            background_tasks.add_task(_background_enrich, person_id)
+            # Enrichissement OSINT réservé aux personnes réellement investiguées : une entrée
+            # lfw_dataset est une personnalité publique du jeu de données académique, pas le
+            # sujet d'une enquête — la lancer dans le moteur OSINT n'a pas de sens ici.
+            if person.source == "investigation":
+                background_tasks.add_task(_background_enrich, person_id)
             background_tasks.add_task(index_person, person)  # confidence_score mis à jour
         return FaceUploadResponse(
             person_id=person_id,
             is_new=False,
             confidence_score=confidence,
             faces_count=result["faces_count"],
+            source=person.source,
         )
 
     # Pas de match → nouvelle personne
@@ -165,6 +176,7 @@ async def list_face_persons(
             confidence_score=p.confidence_score,
             has_embedding=True,
             notes=p.notes,
+            source=p.source,
             created_at=p.created_at,
         )
         for p in persons

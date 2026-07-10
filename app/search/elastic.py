@@ -44,6 +44,9 @@ INDEX_MAPPINGS: dict[str, dict] = {
             "last_name": _TEXT_KEYWORD,
             "notes": {"type": "text"},
             "confidence_score": {"type": "float"},
+            # "investigation" ou "lfw_dataset" (jeu de données académique public) — permet à
+            # l'UI de recherche full-text de distinguer les deux, jamais confondues.
+            "source": {"type": "keyword"},
             "created_at": {"type": "date"},
         },
     },
@@ -137,7 +140,12 @@ class ElasticClient:
             return False
 
     async def create_indices(self) -> None:
-        """Crée les index manquants (idempotent). N'écrase jamais un index existant.
+        """Crée les index manquants (idempotent), et complète le mapping de ceux déjà
+        présents avec les champs manquants (ex : ajout de `source` sur `osint_persons` —
+        Module 15bis). N'écrase jamais un index existant, ni un champ déjà déclaré :
+        `put_mapping` sur un index `dynamic: strict` n'autorise que l'AJOUT de nouveaux
+        champs, jamais la modification d'un champ existant (ce qui échouerait de toute
+        façon côté ES) — sûr à rejouer à chaque démarrage.
 
         Sans ES disponible : ne fait rien (log warning) — l'app démarre quand même.
         """
@@ -147,12 +155,15 @@ class ElasticClient:
         for name, mappings in INDEX_MAPPINGS.items():
             try:
                 if await self._client.indices.exists(index=name):
-                    logger.debug(f"[elastic] Index déjà présent : {name}")
+                    await self._client.indices.put_mapping(
+                        index=name, properties=mappings["properties"]
+                    )
+                    logger.debug(f"[elastic] Index déjà présent (mapping vérifié) : {name}")
                     continue
                 await self._client.indices.create(index=name, mappings=mappings)
                 logger.info(f"[elastic] Index créé : {name}")
             except Exception as e:
-                logger.warning(f"[elastic] Échec création index {name} : {e}")
+                logger.warning(f"[elastic] Échec création/mise à jour index {name} : {e}")
 
 
 # Instance unique partagée par l'application (comme les rate limiters du projet).

@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,10 +9,12 @@ from app.core.config import get_settings
 from app.core.security import authenticate_user, create_access_token, require_role, verify_token
 from app.core.audit import create_audit_log, get_client_ip, resolve_user_id
 from app.db.session import get_db
-from app.db.models import Correlation, Email, Person, SearchHistory, SearchResult, Site
+from app.db.models import Correlation, Email, Person, SearchHistory, SearchResult, Site, hash_email
 from app.schemas.schemas import (
     CorrelationResponse,
+    EmailAddRequest,
     EmailResponse,
+    EnrichResponse,
     FulltextResponse,
     FulltextScope,
     HealthResponse,
@@ -247,6 +251,122 @@ async def update_person(
 
     logger.info(f"[persons] Personne {person_id} mise à jour : {list(updates.keys())}")
     return person
+
+
+# Format email simple (suffisant pour valider une saisie manuelle, pas une vérification MX).
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+@router.post(
+    "/api/persons/{person_id}/emails", response_model=EmailResponse,
+    status_code=status.HTTP_201_CREATED, tags=["données"],
+)
+async def add_person_email(
+    person_id: int,
+    body: EmailAddRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    token_data: dict = Depends(verify_token),
+):
+    """Rattache manuellement un email à une personne — point de départ de l'enrichissement
+    OSINT (`POST /api/persons/{person_id}/enrich`), qui pivote à partir des emails connus.
+
+    Refusé sur une personne `source=lfw_dataset` (jeu de données académique, pas une vraie
+    enquête — voir CLAUDE.md, section reconnaissance faciale).
+    """
+    person = await db.get(Person, person_id)
+    if not person:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Personne introuvable")
+    if person.source == "lfw_dataset":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Impossible d'ajouter un email à une entrée du jeu de données académique LFW "
+            "— ce n'est pas une vraie personne investiguée.",
+        )
+
+    email_addr = body.email.strip().lower()
+    if not _EMAIL_RE.match(email_addr):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Format d'email invalide")
+
+    existing = await db.execute(
+        select(Email).where(Email.email_hash == hash_email(email_addr))
+    )
+    existing_email = existing.scalar_one_or_none()
+    if existing_email:
+        if existing_email.person_id == person_id:
+            return existing_email  # idempotent
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Cet email est déjà rattaché à une autre personne (id="
+            f"{existing_email.person_id}).",
+        )
+
+    email_obj = Email(email=email_addr, source=body.source, person_id=person_id)
+    db.add(email_obj)
+    await db.flush()
+
+    user_id = await resolve_user_id(db, token_data.get("sub", "unknown"))
+    await create_audit_log(
+        db, "email_added_manually", target=f"person_id={person_id}",
+        user_id=user_id, ip_address=get_client_ip(request),
+    )
+    logger.info(f"[persons] Email ajouté manuellement à person_id={person_id}")
+    return email_obj
+
+
+async def _run_enrichment(person_id: int) -> None:
+    """Tâche de fond : ouvre sa propre session (celle de la requête est déjà fermée)."""
+    from app.db.session import async_session
+    from app.osint.correlator import enrich_person
+    try:
+        async with async_session() as session:
+            result = await enrich_person(person_id, session)
+            logger.info(f"[persons] Enrichissement manuel terminé : {result}")
+    except Exception as e:
+        logger.error(f"[persons] Erreur enrichissement manuel person_id={person_id} : {e}")
+
+
+@router.post("/api/persons/{person_id}/enrich", response_model=EnrichResponse, tags=["données"])
+async def enrich_person_endpoint(
+    person_id: int,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    token_data: dict = Depends(verify_token),
+):
+    """Lance manuellement le pivot OSINT (email → WHOIS/DNS/sources → nouveaux emails/sites,
+    jusqu'à 3 niveaux) sur une personne. Nécessite au moins un email déjà rattaché — voir
+    `POST /api/persons/{person_id}/emails`. Tourne en arrière-plan (résultat visible ensuite
+    sur le rapport/graphe), comme `POST /api/search`.
+    """
+    person = await db.get(Person, person_id)
+    if not person:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Personne introuvable")
+    if person.source == "lfw_dataset":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Impossible d'enrichir une entrée du jeu de données académique LFW.",
+        )
+
+    has_email = await db.scalar(
+        select(func.count()).select_from(Email).where(Email.person_id == person_id)
+    )
+    if not has_email:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Aucun email rattaché à cette personne — ajoutez-en un d'abord "
+            "(POST /api/persons/{id}/emails) avant de lancer l'enrichissement.",
+        )
+
+    user_id = await resolve_user_id(db, token_data.get("sub", "unknown"))
+    await create_audit_log(
+        db, "enrichment_launched", target=f"person_id={person_id}",
+        user_id=user_id, ip_address=get_client_ip(request),
+    )
+
+    background_tasks.add_task(_run_enrichment, person_id)
+
+    return EnrichResponse(message="Enrichissement lancé en arrière-plan", person_id=person_id)
 
 
 # --- Statistiques (KPI dashboard) ---

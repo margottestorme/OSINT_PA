@@ -162,7 +162,10 @@ async function doUpload(file) {
     try {
         const data = await API.uploadFace(file);
         const kind = data.is_new ? "Nouvelle personne créée" : "Personne reconnue";
-        resultEl.innerHTML = `<strong>${kind}</strong> — ID ${data.person_id}, ` +
+        const lfwNote = data.source === "lfw_dataset"
+            ? ` <span class="lfw-badge" title="Jeu de données académique public (Labeled Faces in the Wild) — pas une vraie personne investiguée">jeu de données académique LFW</span>`
+            : "";
+        resultEl.innerHTML = `<strong>${kind}</strong>${lfwNote} — ID ${data.person_id}, ` +
             `confiance ${(data.confidence_score * 100).toFixed(1)}%, ${data.faces_count} visage(s)`;
         resultEl.classList.remove("hidden");
         toast(kind, "success");
@@ -269,9 +272,12 @@ async function loadPersons(offset) {
             for (const p of data) {
                 personsCache[p.id] = p;
                 const tr = document.createElement("tr");
+                const lfwBadge = p.source === "lfw_dataset"
+                    ? ` <span class="lfw-badge" title="Jeu de données académique public (Labeled Faces in the Wild) — pas une vraie personne investiguée">LFW</span>`
+                    : "";
                 tr.innerHTML =
                     `<td class="mono">#${p.id}</td>` +
-                    `<td>${escapeHtml(p.first_name)}</td>` +
+                    `<td>${escapeHtml(p.first_name)}${lfwBadge}</td>` +
                     `<td>${escapeHtml(p.last_name)}</td>` +
                     `<td>${(p.confidence_score * 100).toFixed(0)}%</td>` +
                     `<td class="text-muted">${formatDate(p.created_at)}</td>` +
@@ -456,6 +462,8 @@ function initReport() {
         if (!slug) { toast("Nom insuffisant pour déduire un pseudo", "info"); return; }
         window.location.href = "/username?q=" + encodeURIComponent(slug);
     });
+    document.getElementById("person-enrich").addEventListener("click", onEnrichClick);
+    document.getElementById("add-email-form").addEventListener("submit", onAddEmailSubmit);
     document.getElementById("emails-body").addEventListener("click", onReportEntityClick);
     document.getElementById("sites-body").addEventListener("click", onReportEntityClick);
 
@@ -523,6 +531,79 @@ async function loadReport(personId) {
     } finally {
         loading.classList.add("hidden");
     }
+}
+
+async function onAddEmailSubmit(e) {
+    e.preventDefault();
+    const input = document.getElementById("add-email-input");
+    const email = input.value.trim();
+    if (!email || !reportPersonId) return;
+    try {
+        await API.addPersonEmail(reportPersonId, email);
+        input.value = "";
+        toast("Email ajouté", "success");
+        loadReport(reportPersonId);
+    } catch (err) {
+        toast(err.message, "error");
+    }
+}
+
+async function onEnrichClick() {
+    if (!reportPersonId) return;
+    const personId = reportPersonId;
+    const btn = document.getElementById("person-enrich");
+
+    let baselineTotal = 0;
+    try {
+        const before = await API.getPersonReport(personId);
+        baselineTotal = before.emails.length + before.sites.length + before.correlations.length;
+    } catch { /* si ça échoue, on part d'une base à 0 — le polling reste correct */ }
+
+    try {
+        const data = await API.enrichPerson(personId);
+        toast(data.message, "info");
+    } catch (err) {
+        toast(err.message, "error");
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Enrichissement...';
+    pollEnrichment(personId, baselineTotal, () => {
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="zap"></i> Enrichir';
+        lucide.createIcons();
+    });
+}
+
+function pollEnrichment(personId, baselineTotal, done) {
+    // enrich_person() ne commit qu'UNE SEULE FOIS à la toute fin (transaction atomique,
+    // voir app/osint/correlator.py) : rien n'est visible via une autre requête tant que ce
+    // n'est pas fini. On détecte donc la fin par une AUGMENTATION du total emails+sites+
+    // correlations par rapport à la base de départ — jamais par une "stabilité" du total,
+    // qui resterait à 0 pendant tout le déroulé puis sauterait d'un coup à la fin.
+    let elapsed = 0;
+    const interval = setInterval(async () => {
+        elapsed += 3;
+        try {
+            const data = await API.getPersonReport(personId);
+            const total = data.emails.length + data.sites.length + data.correlations.length;
+            if (total > baselineTotal) {
+                clearInterval(interval);
+                done();
+                toast(`Enrichissement terminé — ${total - baselineTotal} nouvelle(s) entité(s) trouvée(s)`, "success");
+                if (reportPersonId === personId) loadReport(personId);
+                return;
+            }
+        } catch { /* ignore, on retente au prochain tick */ }
+        if (elapsed >= 90) {
+            clearInterval(interval);
+            done();
+            toast("Toujours en cours (ou rien trouvé de nouveau) — vérifie le rapport dans "
+                + "quelques instants.", "info");
+            if (reportPersonId === personId) loadReport(personId);
+        }
+    }, 3000);
 }
 
 function renderPersonHeader(p) {
@@ -1564,9 +1645,12 @@ function drawFaces(faces) {
     faces.forEach((face) => {
         const { top, right, bottom, left } = face.location;
         const known = !face.is_new;
-        const color = known ? "#10b981" : "#ef4444";  // vert = connu / rouge = inconnu
+        const isLfw = face.source === "lfw_dataset";
+        // vert = personne réellement investiguée / ambre = jeu de données académique LFW
+        // (jamais confondu avec une vraie identification) / rouge = inconnu
+        const color = !known ? "#ef4444" : (isLfw ? "#f59e0b" : "#10b981");
         const label = known
-            ? `${face.name || "?"} · ${Math.round((face.confidence || 0) * 100)}%`
+            ? `${face.name || "?"} · ${Math.round((face.confidence || 0) * 100)}%${isLfw ? " (LFW)" : ""}`
             : "Inconnu";
 
         ctx.lineWidth = 3;
@@ -1603,7 +1687,8 @@ function updateStreamStats(data) {
 
     if (known.length) {
         const m = known[0];
-        document.getElementById("match-name").textContent = m.name;
+        const lfwSuffix = m.source === "lfw_dataset" ? " (jeu de données académique LFW)" : "";
+        document.getElementById("match-name").textContent = m.name + lfwSuffix;
         document.getElementById("match-score").textContent =
             `${Math.round((m.confidence || 0) * 100)}% de confiance`;
         document.getElementById("match-report").href = "/report?id=" + m.person_id;

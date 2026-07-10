@@ -25,11 +25,12 @@ def _fake_cap(opened=True, w=1280, h=720, fps=30.0):
     return cap
 
 
-async def _add_person(embedding, first="Jean", last="Dupont") -> int:
+async def _add_person(embedding, first="Jean", last="Dupont", source="investigation") -> int:
     """Insère une personne (avec embedding) dans la base de test et renvoie son id."""
     from tests.conftest import session_test
     async with session_test() as s:
-        p = Person(first_name=first, last_name=last, embedding=embedding, confidence_score=1.0)
+        p = Person(first_name=first, last_name=last, embedding=embedding,
+                    confidence_score=1.0, source=source)
         s.add(p)
         await s.commit()
         return p.id
@@ -154,6 +155,7 @@ async def test_analyze_new_face(client, auth_headers):
     f = resp.json()["faces"][0]
     assert f["person_id"] is None and f["name"] is None
     assert f["confidence"] is None and f["is_new"] is True
+    assert f["source"] is None
     assert f["location"] == {"top": 1, "right": 2, "bottom": 3, "left": 4}
 
 
@@ -173,6 +175,22 @@ async def test_analyze_match(client, auth_headers):
     assert f["name"] == "Jean Dupont"
     assert f["is_new"] is False
     assert f["confidence"] == 1.0  # distance nulle → confiance 1.0
+    assert f["source"] == "investigation"
+
+
+@pytest.mark.asyncio
+async def test_analyze_match_lfw_dataset_source(client, auth_headers):
+    """Visage correspondant à une entrée du jeu de données académique LFW → source distincte,
+    pour que l'UI ne confonde jamais ça avec une vraie personne investiguée."""
+    emb = [0.2] * 128
+    pid = await _add_person(emb, "George W", "Bush", source="lfw_dataset")
+    faces = [{"location": {"top": 10, "right": 50, "bottom": 60, "left": 20}, "embedding": emb}]
+    with patch("app.api.stream_routes.locate_and_encode", return_value=faces):
+        resp = await client.post("/api/stream/analyze", json={"frame": _VALID_B64}, headers=auth_headers)
+    assert resp.status_code == 200
+    f = resp.json()["faces"][0]
+    assert f["person_id"] == pid
+    assert f["source"] == "lfw_dataset"
 
 
 @pytest.mark.asyncio

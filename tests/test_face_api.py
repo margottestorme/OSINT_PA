@@ -5,11 +5,13 @@ from unittest.mock import patch
 import pytest
 from PIL import Image
 
+from app.db.models import Person
 from app.facial.exceptions import (
     InvalidImageError,
     MultipleFacesError,
     NoFaceDetectedError,
 )
+from tests.conftest import session_test
 
 
 def _make_jpeg(width: int = 100, height: int = 100) -> bytes:
@@ -71,6 +73,7 @@ async def test_faces_upload_new_person(client, auth_headers):
     assert data["confidence_score"] == 1.0
     assert data["faces_count"] == 1
     assert "person_id" in data
+    assert data["source"] == "investigation"
 
 
 # =============================================================
@@ -96,18 +99,57 @@ async def test_faces_upload_match_existing(client, auth_headers):
     # Deuxième upload → match avec la personne créée
     result2 = {**FAKE_PROCESS_RESULT, "hash": hashlib.sha256(jpeg2).hexdigest()}
     with patch("app.api.face_routes.process_image", return_value=result2), \
-         patch("app.api.face_routes.compare_embedding", return_value=(person_id, 0.35)):
+         patch("app.api.face_routes.compare_embedding", return_value=(person_id, 0.35)), \
+         patch("app.api.face_routes._background_enrich") as mock_enrich:
         resp2 = await client.post(
             "/api/faces/upload",
             files={"file": ("face2.jpg", jpeg2, "image/jpeg")},
             headers=auth_headers,
         )
+    # Match sur une personne "investigation" (défaut) : l'enrichissement OSINT est déclenché.
+    mock_enrich.assert_called_once_with(person_id)
 
     assert resp2.status_code == 200
     data = resp2.json()
     assert data["is_new"] is False
     assert data["person_id"] == person_id
     assert data["confidence_score"] == 0.65  # 1.0 - 0.35
+    assert data["source"] == "investigation"
+
+
+# =============================================================
+# POST /api/faces/upload — match sur une personne du jeu de données académique LFW
+# (source="lfw_dataset") : la source est bien remontée, et l'enrichissement OSINT
+# n'est PAS déclenché (une entrée LFW n'est pas le sujet d'une enquête réelle).
+# =============================================================
+
+@pytest.mark.asyncio
+async def test_faces_upload_match_lfw_dataset_person_no_enrich(client, auth_headers):
+    async with session_test() as db:
+        person = Person(
+            first_name="George W", last_name="Bush", confidence_score=1.0,
+            embedding=[0.1] * 128, image_hash="lfw" + "0" * 61, source="lfw_dataset",
+        )
+        db.add(person)
+        await db.commit()
+        await db.refresh(person)
+        person_id = person.id
+
+    jpeg = _make_jpeg()
+    with patch("app.api.face_routes.process_image", return_value=FAKE_PROCESS_RESULT), \
+         patch("app.api.face_routes.compare_embedding", return_value=(person_id, 0.2)), \
+         patch("app.api.face_routes._background_enrich") as mock_enrich:
+        resp = await client.post(
+            "/api/faces/upload",
+            files={"file": ("test.jpg", jpeg, "image/jpeg")},
+            headers=auth_headers,
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["person_id"] == person_id
+    assert data["source"] == "lfw_dataset"
+    mock_enrich.assert_not_called()
 
 
 # =============================================================
@@ -268,6 +310,7 @@ async def test_faces_persons_after_upload(client, auth_headers):
     assert "first_name" in person
     assert "confidence_score" in person
     assert person["has_embedding"] is True
+    assert person["source"] == "investigation"
     # L'embedding brut ne doit PAS être exposé
     assert "embedding" not in person
 

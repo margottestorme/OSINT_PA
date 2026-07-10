@@ -24,10 +24,10 @@ async def _create_investigation(client, headers, title="Enquête test", descript
     return resp.json()
 
 
-async def _seed_person(first="Jean", last="Dupont", score=0.9, created_at=None):
+async def _seed_person(first="Jean", last="Dupont", score=0.9, created_at=None, source="investigation"):
     from tests.conftest import session_test
     async with session_test() as db:
-        p = Person(first_name=first, last_name=last, confidence_score=score)
+        p = Person(first_name=first, last_name=last, confidence_score=score, source=source)
         if created_at:
             p.created_at = created_at
         db.add(p)
@@ -349,6 +349,22 @@ async def test_export_pdf(client, auth_headers):
 
     # Le hash imprimé doit être retrouvable dans les octets du PDF (pageCompression=0)
     assert sha[:32].encode() in body and sha[32:].encode() in body
+
+
+@pytest.mark.asyncio
+async def test_export_pdf_marks_lfw_dataset_person_distinctly(client, auth_headers):
+    # Une personne du jeu de données académique LFW rattachée à une enquête ne doit JAMAIS
+    # apparaître comme une découverte d'enquête réelle dans le rapport forensique.
+    inv = await _create_investigation(client, auth_headers, title="Rapport test 2")
+    pid = await _seed_person(first="George W", last="Bush", source="lfw_dataset")
+    await client.post(f"/api/investigations/{inv['id']}/entities",
+                      json={"entity_type": "person", "entity_id": pid}, headers=auth_headers)
+
+    resp = await client.get(f"/api/investigations/{inv['id']}/export/pdf", headers=auth_headers)
+    assert resp.status_code == 200
+    # "LFW" (ASCII, sans accent) : évite toute ambiguïté d'encodage PDF sur les caractères
+    # accentués de "données"/"démo" dans le flux de contenu.
+    assert b"LFW" in resp.content
 
 
 @pytest.mark.asyncio

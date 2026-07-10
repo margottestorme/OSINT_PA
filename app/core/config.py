@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     TWITCH_CLIENT_ID: str = ""      # dev.twitch.tv/console/apps -> Client ID
     TWITCH_CLIENT_SECRET: str = ""  # même app Twitch -> Client Secret
 
+    # --- Reconnaissance faciale : seuil de matching (voir app/facial/engine.py) ---
+    # Distance euclidienne max (plus bas = plus strict) + marge minimale exigée entre le
+    # meilleur candidat et le 2e pour accepter un match (rejette les cas ambigus plutôt que
+    # de deviner). Valeurs par défaut resserrées le 2026-07-09 après avoir mesuré des
+    # collisions inter-personnes sous 0.6 sur le jeu LFW (Module 15bis).
+    FACE_MATCH_THRESHOLD: float = 0.55
+    FACE_MATCH_MIN_MARGIN: float = 0.03
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     model_config = {"env_file": ".env", "extra": "ignore"}
