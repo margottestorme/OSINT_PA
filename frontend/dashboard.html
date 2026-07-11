@@ -191,6 +191,14 @@
             <label for="edit-notes">Notes</label>
             <textarea class="input" id="edit-notes" rows="3" maxlength="5000"></textarea>
         </div>
+        <div class="field">
+            <label for="edit-source">Origine</label>
+            <select class="input" id="edit-source">
+                <option value="investigation">Enquete — sujet reel (profilage OSINT autorise)</option>
+                <option value="consented_demo">Sujet consentant — demo (jamais profile)</option>
+            </select>
+            <small class="text-muted" id="edit-source-hint">Seul « Enquete » autorise l'enrichissement OSINT automatique.</small>
+        </div>
         <div id="edit-error" class="alert alert-error hidden" role="alert"></div>
         <div class="modal-actions">
             <button class="btn btn-ghost" id="edit-cancel">Annuler</button>

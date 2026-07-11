@@ -33,7 +33,7 @@ profondeur — c'est la meilleure source pour comprendre le *pourquoi* de chaque
 |---|---|---|
 | Backend | FastAPI 0.111 + uvicorn (async) | point d'entrée [app/main.py](app/main.py) |
 | ORM / DB | SQLAlchemy 2.0 (async, `Mapped[...]`) + PostgreSQL 15 | SQLite (aiosqlite) en tests |
-| Migrations | Alembic (`alembic/versions/`, 12 révisions) | jamais de `create_all` en prod |
+| Migrations | Alembic (`alembic/versions/`, 13 révisions) | jamais de `create_all` en prod |
 | Auth | python-jose (JWT HS256, 15-60 min) + passlib/bcrypt | rôles `admin` / `analyst` |
 | NLP | spaCy `fr_core_news_sm` | extraction emails/domaines/noms |
 | Reconnaissance faciale | face_recognition + dlib + Pillow | embedding 128D, aucune image persistée |
@@ -173,6 +173,7 @@ python scripts/seed_demo.py                           # jeu de données de démo
 python scripts/reset_demo.py                           # reset des données de démo
 python scripts/audit_username_platforms.py            # audit fiabilité registre pseudos (Module 15)
 python scripts/seed_lfw_dataset.py --limit 50          # jeu de données académique LFW (facial)
+python scripts/index_local_faces.py --dir ./photos_demo # indexe des sujets consentants (démo facial)
 
 # Migrations
 alembic revision -m "message" --autogenerate
@@ -236,6 +237,46 @@ base élargie. Toute réponse API/UI impliquant une entrée `lfw_dataset` doit r
 distincte d'un vrai résultat d'enquête (badge ambre `.lfw-badge` en frontend, colonne « Origine »
 dans le rapport PDF forensique, pas d'enrichissement OSINT automatique déclenché) — ne jamais
 fusionner les deux dans l'UI ou supprimer cette distinction pour « simplifier ».
+
+**Troisième origine — `consented_demo` (2026-07-10)** : `Person.source` prend une 3e valeur pour
+les vraies personnes ayant donné leur **consentement explicite** en vue d'une démonstration en
+direct (l'équipe filmée devant la webcam pour le jury). Elle se distingue de `investigation`
+(sujet d'enquête réel, traitement OSINT complet) ET de `lfw_dataset` (célébrités du jeu figé,
+jamais filmées en direct). Indexées via
+[scripts/index_local_faces.py](scripts/index_local_faces.py) `--dir <dossier>` (dossiers locaux
+fournis par l'utilisateur, **aucun** web ouvert, aucune image persistée — embedding 128D
+seulement). Garde-fous à ne pas régresser : (1) trace de consentement horodatée dans
+`Person.notes` (chiffré au repos) ; (2) badge violet `.consent-badge` (« ✓ Sujet consentant »)
+distinct du vert « enquête »/ambre « LFW »/rouge « inconnu », en overlay webcam comme dans les
+listes ; (3) **jamais d'enrichissement OSINT automatique** — `face_routes.py` ne le déclenche que
+pour `source == "investigation"`, un sujet de démo n'est pas une cible d'enquête. Ne pas réutiliser
+`investigation` pour ces sujets (mélangerait démo et enquêtes réelles et réactiverait
+l'enrichissement auto).
+
+### Pipeline d'enrichissement OSINT post-identification faciale (2026-07-11)
+
+[app/osint/pipeline.py](app/osint/pipeline.py) — `full_enrich_after_face_match(person_id, db,
+job_id)` enchaîne, à partir du NOM d'un sujet identifié : recherche par nom → emails extraits →
+domaines → HIBP → énumération de pseudos (`prenom.nom`). Comble le trou de `enrich_person()`
+(correlator.py), qui ne pivote que sur des emails déjà en base — inutile pour une personne
+fraîchement reconnue. Réutilise l'existant (`correlate`, `enrich_person`, `check_all_platforms`),
+aucune source nouvelle.
+
+**Garde-fou à ne jamais régresser** : le pipeline ne s'exécute QUE pour `source ==
+"investigation"` (refuse `consented_demo`/`lfw_dataset`) et une personne nommée (pas « Inconnu »).
+Ce contrôle est **doublé** aux points d'appel : `POST /api/persons/{id}/enrich` et le déclencheur
+d'upload dans `face_routes.py` re-vérifient l'origine avant de lancer la tâche. Décision
+explicite (2026-07-11, confirmée) : **jamais d'auto-déclenchement depuis le flux webcam**
+(`/api/stream/analyze`) — le flux affiche un bouton « Enrichir » cliquable, pas un profilage
+automatique déclenché par la simple présence d'un visage devant la caméra (motif Clearview
+refusé). Ne pas ajouter d'auto-fire sur le stream sans en rediscuter.
+
+**Suivi (table `enrichment_jobs`, migration e5f6a7b8c9d0)** : chaque enrichissement crée un job
+(`pending` créé côté requête → `running` → `completed`/`failed`), lu par
+`GET /api/persons/{id}/enrichment_status` (dernier job) pour le polling frontend (dashboard,
+stream, section « Dernier enrichissement » du rapport). Le pipeline garantit qu'un job atteint
+**toujours** un état terminal (même sur skip/exception) — sinon le polling UI tournerait à
+l'infini. `triggered_by` ∈ {`face_upload`, `manual`, `stream`}.
 
 ## Ce qu'il reste à faire / roadmap
 

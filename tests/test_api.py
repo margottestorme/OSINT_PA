@@ -329,10 +329,15 @@ async def test_enrich_person_not_found(client, auth_headers):
 
 
 @pytest.mark.asyncio
-async def test_enrich_requires_email_first(client, auth_headers):
-    pid = await _seed_person()
-    resp = await client.post(f"/api/persons/{pid}/enrich", headers=auth_headers)
-    assert resp.status_code == 400
+async def test_enrich_no_email_still_launches(client, auth_headers):
+    # Le pipeline amorce la recherche par le NOM : un sujet d'enquête nommé n'a plus besoin
+    # d'un email préalable (changement de contrat vs l'ancien pivot email-only).
+    from unittest.mock import patch, ANY
+    pid = await _seed_person()  # Jean Dupont, source=investigation, sans email
+    with patch("app.api.routes._run_enrichment") as mock_enrich:
+        resp = await client.post(f"/api/persons/{pid}/enrich", headers=auth_headers)
+    assert resp.status_code == 200
+    mock_enrich.assert_called_once_with(pid, ANY)  # (person_id, job_id)
 
 
 @pytest.mark.asyncio
@@ -343,8 +348,32 @@ async def test_enrich_refused_on_lfw_dataset_person(client, auth_headers):
 
 
 @pytest.mark.asyncio
+async def test_enrich_refused_on_consented_demo_person(client, auth_headers):
+    # Garde-fou central : un sujet consentant de démo n'est jamais profilé.
+    pid = await _seed_person(source="consented_demo")
+    resp = await client.post(f"/api/persons/{pid}/enrich", headers=auth_headers)
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_enrich_refused_on_unknown_person(client, auth_headers):
+    # Personne non identifiée (nom = "Inconnu") : rien à chercher, refus.
+    from tests.conftest import session_test
+    from app.db.models import Person
+    async with session_test() as db:
+        p = Person(first_name="Inconnu", last_name="#abcd1234",
+                   confidence_score=1.0, source="investigation")
+        db.add(p)
+        await db.commit()
+        await db.refresh(p)
+        pid = p.id
+    resp = await client.post(f"/api/persons/{pid}/enrich", headers=auth_headers)
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_enrich_launched_in_background(client, auth_headers):
-    from unittest.mock import patch
+    from unittest.mock import patch, ANY
     pid = await _seed_person()
     await client.post(f"/api/persons/{pid}/emails", json={"email": "a@b.com"}, headers=auth_headers)
 
@@ -354,7 +383,143 @@ async def test_enrich_launched_in_background(client, auth_headers):
     assert resp.status_code == 200
     data = resp.json()
     assert data["person_id"] == pid
-    mock_enrich.assert_called_once_with(pid)
+    mock_enrich.assert_called_once_with(pid, ANY)  # (person_id, job_id)
+
+
+# =============================================================
+# EnrichmentJob — endpoint de statut + cycle de vie (Étapes 3+4)
+# =============================================================
+
+@pytest.mark.asyncio
+async def test_enrichment_status_404_when_no_job(client, auth_headers):
+    pid = await _seed_person()
+    resp = await client.get(f"/api/persons/{pid}/enrichment_status", headers=auth_headers)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_enrich_creates_pending_job(client, auth_headers):
+    from unittest.mock import patch
+    pid = await _seed_person()
+    with patch("app.api.routes._run_enrichment"):  # ne pas exécuter le pipeline réel
+        resp = await client.post(f"/api/persons/{pid}/enrich", headers=auth_headers)
+    assert resp.status_code == 200
+
+    st = await client.get(f"/api/persons/{pid}/enrichment_status", headers=auth_headers)
+    assert st.status_code == 200
+    body = st.json()
+    assert body["status"] == "pending"
+    assert body["triggered_by"] == "manual"
+
+
+@pytest.mark.asyncio
+async def test_enrich_stream_trigger_recorded(client, auth_headers):
+    from unittest.mock import patch
+    pid = await _seed_person()
+    with patch("app.api.routes._run_enrichment"):
+        resp = await client.post(f"/api/persons/{pid}/enrich?trigger=stream", headers=auth_headers)
+    assert resp.status_code == 200
+
+    st = await client.get(f"/api/persons/{pid}/enrichment_status", headers=auth_headers)
+    assert st.json()["triggered_by"] == "stream"
+
+
+@pytest.mark.asyncio
+async def test_enrich_invalid_trigger_rejected(client, auth_headers):
+    pid = await _seed_person()
+    resp = await client.post(f"/api/persons/{pid}/enrich?trigger=hack", headers=auth_headers)
+    assert resp.status_code == 422  # pattern query param
+
+
+@pytest.mark.asyncio
+async def test_enrichment_status_completed_summary_and_duration(client, auth_headers):
+    from datetime import datetime, timezone, timedelta
+    from tests.conftest import session_test
+    from app.db.models import EnrichmentJob
+    pid = await _seed_person()
+    start = datetime.now(timezone.utc)
+    async with session_test() as db:
+        db.add(EnrichmentJob(
+            person_id=pid, status="completed", triggered_by="manual",
+            started_at=start, completed_at=start + timedelta(seconds=12),
+            summary={"emails_found": 2, "sites_found": 3,
+                     "correlations_created": 1, "username_platforms_found": 4},
+        ))
+        await db.commit()
+
+    resp = await client.get(f"/api/persons/{pid}/enrichment_status", headers=auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "completed"
+    assert body["summary"]["emails_found"] == 2
+    assert body["duration_seconds"] == 12.0
+
+
+@pytest.mark.asyncio
+async def test_enrichment_status_returns_latest_job(client, auth_headers):
+    # L'endpoint renvoie le DERNIER job (id le plus élevé), pas le premier.
+    from tests.conftest import session_test
+    from app.db.models import EnrichmentJob
+    pid = await _seed_person()
+    async with session_test() as db:
+        db.add(EnrichmentJob(person_id=pid, status="completed", triggered_by="manual"))
+        db.add(EnrichmentJob(person_id=pid, status="running", triggered_by="stream"))
+        await db.commit()
+    resp = await client.get(f"/api/persons/{pid}/enrichment_status", headers=auth_headers)
+    assert resp.json()["status"] == "running"
+    assert resp.json()["triggered_by"] == "stream"
+
+
+@pytest.mark.asyncio
+async def test_enrichment_status_requires_auth(client):
+    resp = await client.get("/api/persons/1/enrichment_status")
+    assert resp.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_skip_marks_job_failed_not_stuck():
+    # Garde-fou + sûreté : un sujet consentant est refusé, et le job atteint TOUJOURS un état
+    # terminal ("failed") — jamais coincé en pending/running (sinon le polling tournerait à
+    # l'infini). Chemin réseau-free (le pipeline retourne au garde-fou, avant tout appel OSINT).
+    from tests.conftest import session_test
+    from app.db.models import Person, EnrichmentJob
+    from app.osint.pipeline import full_enrich_after_face_match
+    async with session_test() as db:
+        p = Person(first_name="Alice", last_name="Martin", confidence_score=1.0, source="consented_demo")
+        db.add(p)
+        await db.flush()
+        job = EnrichmentJob(person_id=p.id, status="pending", triggered_by="manual")
+        db.add(job)
+        await db.commit()
+        pid, jid = p.id, job.id
+
+    async with session_test() as db:
+        summary = await full_enrich_after_face_match(pid, db, job_id=jid)
+        assert summary["skipped"]
+
+    async with session_test() as db:
+        job = await db.get(EnrichmentJob, jid)
+        assert job.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_update_person_source_accepts_valid(client, auth_headers):
+    # Reclasser un sujet en consented_demo (le protège du profilage).
+    pid = await _seed_person()  # source=investigation au départ
+    resp = await client.patch(
+        f"/api/persons/{pid}", json={"source": "consented_demo"}, headers=auth_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["source"] == "consented_demo"
+
+
+@pytest.mark.asyncio
+async def test_update_person_source_rejects_invalid(client, auth_headers):
+    pid = await _seed_person()
+    resp = await client.patch(
+        f"/api/persons/{pid}", json={"source": "hacker"}, headers=auth_headers
+    )
+    assert resp.status_code == 422  # rejeté par la validation Pydantic (allowlist)
 
 
 # =============================================================

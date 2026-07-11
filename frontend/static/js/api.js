@@ -181,8 +181,12 @@ const API = (() => {
         return _request("POST", "/api/persons/" + personId + "/emails", { json: { email, source } });
     }
 
-    async function enrichPerson(personId) {
-        return _request("POST", "/api/persons/" + personId + "/enrich");
+    async function enrichPerson(personId, trigger = "manual") {
+        return _request("POST", "/api/persons/" + personId + "/enrich?trigger=" + encodeURIComponent(trigger));
+    }
+
+    async function getEnrichmentStatus(personId) {
+        return _request("GET", "/api/persons/" + personId + "/enrichment_status");
     }
 
     // --- Enquêtes (Module 14) ---
@@ -282,6 +286,7 @@ const API = (() => {
         updatePerson,
         addPersonEmail,
         enrichPerson,
+        getEnrichmentStatus,
         listInvestigations,
         getInvestigation,
         createInvestigation,

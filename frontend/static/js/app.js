@@ -162,15 +162,17 @@ async function doUpload(file) {
     try {
         const data = await API.uploadFace(file);
         const kind = data.is_new ? "Nouvelle personne créée" : "Personne reconnue";
-        const lfwNote = data.source === "lfw_dataset"
-            ? ` <span class="lfw-badge" title="Jeu de données académique public (Labeled Faces in the Wild) — pas une vraie personne investiguée">jeu de données académique LFW</span>`
-            : "";
-        resultEl.innerHTML = `<strong>${kind}</strong>${lfwNote} — ID ${data.person_id}, ` +
+        resultEl.innerHTML = `<strong>${kind}</strong>${sourceBadgeHtml(data.source)} — ID ${data.person_id}, ` +
             `confiance ${(data.confidence_score * 100).toFixed(1)}%, ${data.faces_count} visage(s)`;
         resultEl.classList.remove("hidden");
         toast(kind, "success");
         loadPersons(0);
         loadStats();
+        // Le serveur lance l'enrichissement OSINT pour un match sur un sujet d'enquête nommé.
+        // On suit le job (404 géré = pas de job créé, ex. visage encore "Inconnu").
+        if (!data.is_new && data.source === "investigation") {
+            watchEnrichment(data.person_id, resultEl);
+        }
     } catch (err) {
         errorEl.textContent = err.message;
         errorEl.classList.remove("hidden");
@@ -272,12 +274,9 @@ async function loadPersons(offset) {
             for (const p of data) {
                 personsCache[p.id] = p;
                 const tr = document.createElement("tr");
-                const lfwBadge = p.source === "lfw_dataset"
-                    ? ` <span class="lfw-badge" title="Jeu de données académique public (Labeled Faces in the Wild) — pas une vraie personne investiguée">LFW</span>`
-                    : "";
                 tr.innerHTML =
                     `<td class="mono">#${p.id}</td>` +
-                    `<td>${escapeHtml(p.first_name)}${lfwBadge}</td>` +
+                    `<td>${escapeHtml(p.first_name)}${sourceBadgeHtml(p.source)}</td>` +
                     `<td>${escapeHtml(p.last_name)}</td>` +
                     `<td>${(p.confidence_score * 100).toFixed(0)}%</td>` +
                     `<td class="text-muted">${formatDate(p.created_at)}</td>` +
@@ -340,8 +339,25 @@ function openEditModal(person, onSaved) {
     document.getElementById("edit-first-name").value = person.first_name;
     document.getElementById("edit-last-name").value = person.last_name;
     document.getElementById("edit-notes").value = person.notes || "";
+    setEditSourceOptions(person.source || "investigation");
     document.getElementById("edit-error").classList.add("hidden");
     document.getElementById("edit-modal").classList.remove("hidden");
+}
+
+// Le select ne propose que les deux origines réellement assignables par un analyste
+// (investigation / consented_demo). Si la personne est déjà lfw_dataset (jeu académique
+// seedé par script), on ajoute temporairement l'option pour l'afficher correctement.
+function setEditSourceOptions(source) {
+    const sel = document.getElementById("edit-source");
+    sel.querySelectorAll("option[data-dynamic]").forEach((o) => o.remove());
+    if (!["investigation", "consented_demo"].includes(source)) {
+        const opt = document.createElement("option");
+        opt.value = source;
+        opt.textContent = "Jeu academique LFW";
+        opt.setAttribute("data-dynamic", "1");
+        sel.appendChild(opt);
+    }
+    sel.value = source;
 }
 
 function closeEditModal() {
@@ -355,6 +371,7 @@ async function saveEdit() {
         first_name: document.getElementById("edit-first-name").value.trim(),
         last_name: document.getElementById("edit-last-name").value.trim(),
         notes: document.getElementById("edit-notes").value.trim(),
+        source: document.getElementById("edit-source").value,
     };
     try {
         await API.updatePerson(id, body);
@@ -463,6 +480,7 @@ function initReport() {
         window.location.href = "/username?q=" + encodeURIComponent(slug);
     });
     document.getElementById("person-enrich").addEventListener("click", onEnrichClick);
+    document.getElementById("enrichment-rerun").addEventListener("click", onEnrichClick);
     document.getElementById("add-email-form").addEventListener("submit", onAddEmailSubmit);
     document.getElementById("emails-body").addEventListener("click", onReportEntityClick);
     document.getElementById("sites-body").addEventListener("click", onReportEntityClick);
@@ -502,6 +520,7 @@ async function loadReport(personId) {
         reportExport = data;
 
         renderPersonHeader(data.person);
+        renderEnrichmentStatus(personId);  // section « Dernier enrichissement » (si un job existe)
         renderPersonGraph(data);
         renderReportTable("emails", data.emails, (e) =>
             `<td>${escapeHtml(e.email)}</td><td><span class="badge">${escapeHtml(e.source)}</span></td><td class="text-muted">${formatDate(e.created_at)}</td>` +
@@ -552,16 +571,14 @@ async function onEnrichClick() {
     if (!reportPersonId) return;
     const personId = reportPersonId;
     const btn = document.getElementById("person-enrich");
+    const reset = () => {
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="zap"></i> Enrichir';
+        lucide.createIcons();
+    };
 
-    let baselineTotal = 0;
     try {
-        const before = await API.getPersonReport(personId);
-        baselineTotal = before.emails.length + before.sites.length + before.correlations.length;
-    } catch { /* si ça échoue, on part d'une base à 0 — le polling reste correct */ }
-
-    try {
-        const data = await API.enrichPerson(personId);
-        toast(data.message, "info");
+        await API.enrichPerson(personId, "manual");
     } catch (err) {
         toast(err.message, "error");
         return;
@@ -569,41 +586,68 @@ async function onEnrichClick() {
 
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Enrichissement...';
-    pollEnrichment(personId, baselineTotal, () => {
-        btn.disabled = false;
-        btn.innerHTML = '<i data-lucide="zap"></i> Enrichir';
-        lucide.createIcons();
+    pollEnrichmentStatus(personId, {
+        onState: (d) => renderEnrichmentStatusFrom(d),
+        onDone: (d) => {
+            reset();
+            if (d && d.status === "completed") {
+                toast(`✓ Enrichissement terminé : ${enrichmentSummaryText(d.summary)} trouvés`, "success");
+                if (reportPersonId === personId) loadReport(personId);
+            } else {
+                if (d) renderEnrichmentStatusFrom(d);
+                if (d && d.status === "failed")
+                    toast("Enrichissement échoué" + (d.error_message ? " : " + d.error_message : ""), "error");
+            }
+        },
     });
 }
 
-function pollEnrichment(personId, baselineTotal, done) {
-    // enrich_person() ne commit qu'UNE SEULE FOIS à la toute fin (transaction atomique,
-    // voir app/osint/correlator.py) : rien n'est visible via une autre requête tant que ce
-    // n'est pas fini. On détecte donc la fin par une AUGMENTATION du total emails+sites+
-    // correlations par rapport à la base de départ — jamais par une "stabilité" du total,
-    // qui resterait à 0 pendant tout le déroulé puis sauterait d'un coup à la fin.
-    let elapsed = 0;
-    const interval = setInterval(async () => {
-        elapsed += 3;
-        try {
-            const data = await API.getPersonReport(personId);
-            const total = data.emails.length + data.sites.length + data.correlations.length;
-            if (total > baselineTotal) {
-                clearInterval(interval);
-                done();
-                toast(`Enrichissement terminé — ${total - baselineTotal} nouvelle(s) entité(s) trouvée(s)`, "success");
-                if (reportPersonId === personId) loadReport(personId);
-                return;
-            }
-        } catch { /* ignore, on retente au prochain tick */ }
-        if (elapsed >= 90) {
-            clearInterval(interval);
-            done();
-            toast("Toujours en cours (ou rien trouvé de nouveau) — vérifie le rapport dans "
-                + "quelques instants.", "info");
-            if (reportPersonId === personId) loadReport(personId);
-        }
-    }, 3000);
+// Section « Dernier enrichissement » de la page rapport. renderEnrichmentStatus va chercher
+// le dernier job (utilisé au chargement) ; renderEnrichmentStatusFrom rend depuis des données
+// déjà en main (utilisé pendant le polling, pour éviter une requête en double).
+async function renderEnrichmentStatus(personId) {
+    let d = null;
+    try { d = await API.getEnrichmentStatus(personId); } catch { d = null; }  // 404 = aucun job
+    renderEnrichmentStatusFrom(d);
+}
+
+function renderEnrichmentStatusFrom(d) {
+    const section = document.getElementById("enrichment-section");
+    if (!section) return;
+    if (!d) { section.classList.add("hidden"); return; }
+    section.classList.remove("hidden");
+
+    const labels = { pending: "En attente", running: "En cours", completed: "Terminé", failed: "Échoué" };
+    const badgeCls = { pending: "pending", running: "pending", completed: "done", failed: "archived" };
+    const badge = document.getElementById("enrichment-status-badge");
+    badge.textContent = labels[d.status] || d.status;
+    badge.className = "status-badge " + (badgeCls[d.status] || "");
+
+    document.getElementById("enrichment-trigger").textContent = "Déclenché par : " + (d.triggered_by || "—");
+    const when = d.completed_at || d.started_at;
+    document.getElementById("enrichment-date").textContent = when ? formatDate(when) : "";
+    document.getElementById("enrichment-duration").textContent =
+        d.duration_seconds != null ? `· ${d.duration_seconds}s` : "";
+
+    const sum = document.getElementById("enrichment-summary");
+    if (d.status === "completed" && d.summary) {
+        const s = d.summary;
+        sum.textContent = `${s.emails_found || 0} emails · ${s.sites_found || 0} sites · `
+            + `${s.correlations_created || 0} corrélations · ${s.username_platforms_found || 0} plateformes`;
+    } else {
+        sum.textContent = "";
+    }
+
+    const errEl = document.getElementById("enrichment-error");
+    if (d.status === "failed" && d.error_message) {
+        errEl.textContent = d.error_message;
+        errEl.classList.remove("hidden");
+    } else {
+        errEl.classList.add("hidden");
+    }
+
+    document.getElementById("enrichment-rerun")
+        .classList.toggle("hidden", !(d.status === "completed" || d.status === "failed"));
 }
 
 function renderPersonHeader(p) {
@@ -614,10 +658,17 @@ function renderPersonHeader(p) {
     avatar.textContent = ((p.first_name[0] || "") + (p.last_name[0] || "")).toUpperCase() || "?";
     avatar.style.background = AVATAR_COLORS[h % AVATAR_COLORS.length];
 
-    document.getElementById("person-name").textContent = `${p.first_name} ${p.last_name}`;
+    document.getElementById("person-name").innerHTML =
+        escapeHtml(`${p.first_name} ${p.last_name}`) + sourceBadgeHtml(p.source);
     document.getElementById("person-score").textContent = `${(p.confidence_score * 100).toFixed(0)}% confiance`;
     document.getElementById("person-id").textContent = `#${p.id}`;
     document.getElementById("person-date").textContent = formatDate(p.created_at);
+
+    // Enrichissement OSINT réservé aux sujets d'enquête : on masque le bouton pour un sujet
+    // consentant / une entrée LFW (le backend le refuserait de toute façon, mais autant ne
+    // pas le proposer). Voir CLAUDE.md, section reconnaissance faciale.
+    const enrichBtn = document.getElementById("person-enrich");
+    if (enrichBtn) enrichBtn.classList.toggle("hidden", p.source !== "investigation");
 
     const notes = document.getElementById("person-notes");
     if (p.notes) {
@@ -1474,6 +1525,7 @@ let streamInterval = null;
 let mediaStream = null;
 let analyzeInFlight = false;   // skip un frame tant que l'analyse précédente n'est pas finie
 let fpsSamples = [];           // horodatages des analyses réussies (FPS effectif sur 1 s)
+let streamMatchPersonId = null; // person_id du dernier match enrichissable (bouton cliquable)
 
 function initStream() {
     const user = currentUser();
@@ -1482,6 +1534,7 @@ function initStream() {
 
     document.getElementById("toggle-btn").addEventListener("click", toggleStream);
     document.getElementById("register-btn").addEventListener("click", registerStreamFace);
+    document.getElementById("stream-enrich-btn").addEventListener("click", onStreamEnrichClick);
 
     const toggle = document.getElementById("toggle-btn");
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -1637,6 +1690,16 @@ async function analyzeFrame() {
     }
 }
 
+// Puce HTML d'origine d'une personne, selon Person.source. Chaîne vide pour une personne
+// d'enquête standard (source="investigation") — pas de badge, cas par défaut.
+function sourceBadgeHtml(source) {
+    if (source === "lfw_dataset")
+        return ` <span class="lfw-badge" title="Jeu de données académique public (Labeled Faces in the Wild) — pas une vraie personne investiguée">LFW</span>`;
+    if (source === "consented_demo")
+        return ` <span class="consent-badge" title="Sujet consentant enregistré pour la démonstration — hors périmètre d'enquête, aucun enrichissement OSINT automatique">✓ Sujet consentant</span>`;
+    return "";
+}
+
 function drawFaces(faces) {
     const overlay = document.getElementById("overlay");
     const ctx = overlay.getContext("2d");
@@ -1646,11 +1709,13 @@ function drawFaces(faces) {
         const { top, right, bottom, left } = face.location;
         const known = !face.is_new;
         const isLfw = face.source === "lfw_dataset";
-        // vert = personne réellement investiguée / ambre = jeu de données académique LFW
-        // (jamais confondu avec une vraie identification) / rouge = inconnu
-        const color = !known ? "#ef4444" : (isLfw ? "#f59e0b" : "#10b981");
+        const isDemo = face.source === "consented_demo";
+        // vert = personne réellement investiguée / ambre = jeu de données académique LFW /
+        // violet = sujet consentant de démo / rouge = inconnu — jamais confondus entre eux
+        const color = !known ? "#ef4444" : (isLfw ? "#f59e0b" : (isDemo ? "#8b5cf6" : "#10b981"));
+        const tag = isLfw ? " (LFW)" : (isDemo ? " (démo)" : "");
         const label = known
-            ? `${face.name || "?"} · ${Math.round((face.confidence || 0) * 100)}%${isLfw ? " (LFW)" : ""}`
+            ? `${face.name || "?"} · ${Math.round((face.confidence || 0) * 100)}%${tag}`
             : "Inconnu";
 
         ctx.lineWidth = 3;
@@ -1687,11 +1752,17 @@ function updateStreamStats(data) {
 
     if (known.length) {
         const m = known[0];
-        const lfwSuffix = m.source === "lfw_dataset" ? " (jeu de données académique LFW)" : "";
-        document.getElementById("match-name").textContent = m.name + lfwSuffix;
+        document.getElementById("match-name").innerHTML =
+            escapeHtml(m.name || "?") + sourceBadgeHtml(m.source);
         document.getElementById("match-score").textContent =
             `${Math.round((m.confidence || 0) * 100)}% de confiance`;
         document.getElementById("match-report").href = "/report?id=" + m.person_id;
+        // Enrichissement OSINT proposé (jamais auto-déclenché) uniquement pour un vrai sujet
+        // d'enquête reconnu avec confiance > 70 % — un sujet consentant / une entrée LFW n'y
+        // a jamais droit (le backend le refuserait de toute façon).
+        const enrichable = m.source === "investigation" && (m.confidence || 0) > 0.7;
+        streamMatchPersonId = enrichable ? m.person_id : null;
+        document.getElementById("match-enrich-wrap").classList.toggle("hidden", !enrichable);
         showIdentity("match");
     } else if (data.faces_count > 0) {
         showIdentity("new");
@@ -1704,6 +1775,96 @@ function showIdentity(state) {
     document.getElementById("identity-empty").classList.toggle("hidden", state !== "empty");
     document.getElementById("identity-match").classList.toggle("hidden", state !== "match");
     document.getElementById("identity-new").classList.toggle("hidden", state !== "new");
+}
+
+// Polling générique du statut d'enrichissement (Étapes 3+4). Interroge
+// GET /api/persons/{id}/enrichment_status toutes les 3 s ; appelle onState à chaque tick puis
+// onDone(data) au premier état terminal (completed/failed). onDone(null) si aucun job (404
+// persistant) ou timeout. Garde-fou anti-boucle infinie.
+function pollEnrichmentStatus(personId, { onState, onDone } = {}) {
+    let ticks = 0;
+    const maxTicks = 100;  // ~5 min à 3 s d'intervalle
+    const timer = setInterval(async () => {
+        ticks++;
+        let data;
+        try {
+            data = await API.getEnrichmentStatus(personId);
+        } catch (err) {
+            // 404 = job pas encore visible (fenêtre courte) : on retente quelques fois.
+            if (ticks > 5) { clearInterval(timer); if (onDone) onDone(null); }
+            return;
+        }
+        if (onState) onState(data);
+        if (data.status === "completed" || data.status === "failed" || ticks >= maxTicks) {
+            clearInterval(timer);
+            if (onDone) onDone(data);
+        }
+    }, 3000);
+    return timer;
+}
+
+// Résumé lisible d'un job terminé, pour les toasts.
+function enrichmentSummaryText(summary) {
+    const s = summary || {};
+    return `${s.emails_found || 0} emails, ${s.sites_found || 0} sites, `
+        + `${s.username_platforms_found || 0} plateformes`;
+}
+
+// Suit un enrichissement en injectant une ligne de statut dans `container` (upload dashboard).
+function watchEnrichment(personId, container) {
+    const box = document.createElement("div");
+    box.style.marginTop = "8px";
+    box.style.fontSize = "0.88rem";
+    box.innerHTML = '<span class="spinner"></span> Enrichissement OSINT en cours...';
+    container.appendChild(box);
+    pollEnrichmentStatus(personId, {
+        onDone: (d) => {
+            if (!d) { box.remove(); return; }
+            if (d.status === "completed") {
+                box.innerHTML = `<span style="color:var(--success); font-weight:600;">✓ Enrichissement terminé</span> — `
+                    + `${enrichmentSummaryText(d.summary)} · <a href="/report?id=${personId}">Voir le rapport</a>`;
+                toast(`✓ Enrichissement terminé : ${enrichmentSummaryText(d.summary)} trouvés`, "success");
+            } else {
+                box.innerHTML = `<span style="color:var(--danger);">Enrichissement échoué</span>`
+                    + (d.error_message ? ` — ${escapeHtml(d.error_message)}` : "");
+            }
+        },
+    });
+}
+
+// Déclenchement MANUEL de l'enrichissement depuis le flux (jamais automatique). Le backend
+// re-vérifie que la personne est bien un sujet d'enquête (source=investigation).
+async function onStreamEnrichClick() {
+    const personId = streamMatchPersonId;
+    if (!personId) return;
+    const btn = document.getElementById("stream-enrich-btn");
+    const reset = () => {
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="zap"></i> Enrichir maintenant';
+        lucide.createIcons();
+    };
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Enrichissement lancé...';
+    try {
+        await API.enrichPerson(personId, "stream");
+    } catch (err) {
+        toast(err.message, "error");
+        reset();
+        return;
+    }
+    pollEnrichmentStatus(personId, {
+        onState: (d) => {
+            if (d.status === "pending" || d.status === "running")
+                btn.innerHTML = '<span class="spinner"></span> Enrichissement en cours...';
+        },
+        onDone: (d) => {
+            reset();
+            if (d && d.status === "completed")
+                toast(`✓ Enrichissement terminé : ${enrichmentSummaryText(d.summary)} trouvés`, "success");
+            else if (d && d.status === "failed")
+                toast("Enrichissement échoué" + (d.error_message ? " : " + d.error_message : ""), "error");
+        },
+    });
 }
 
 function registerStreamFace() {

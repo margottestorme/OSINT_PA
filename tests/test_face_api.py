@@ -96,7 +96,16 @@ async def test_faces_upload_match_existing(client, auth_headers):
     assert resp1.status_code == 200
     person_id = resp1.json()["person_id"]
 
-    # Deuxième upload → match avec la personne créée
+    # La personne est auto-créée "Inconnu" : on la nomme, sinon elle n'est pas enrichissable
+    # (le pipeline pivote sur le nom — un visage encore anonyme n'est jamais profilé).
+    from tests.conftest import session_test
+    from app.db.models import Person
+    async with session_test() as db:
+        p = await db.get(Person, person_id)
+        p.first_name, p.last_name = "Jean", "Dupont"
+        await db.commit()
+
+    # Deuxième upload → match avec la personne (nommée, investigation)
     result2 = {**FAKE_PROCESS_RESULT, "hash": hashlib.sha256(jpeg2).hexdigest()}
     with patch("app.api.face_routes.process_image", return_value=result2), \
          patch("app.api.face_routes.compare_embedding", return_value=(person_id, 0.35)), \
@@ -106,8 +115,9 @@ async def test_faces_upload_match_existing(client, auth_headers):
             files={"file": ("face2.jpg", jpeg2, "image/jpeg")},
             headers=auth_headers,
         )
-    # Match sur une personne "investigation" (défaut) : l'enrichissement OSINT est déclenché.
-    mock_enrich.assert_called_once_with(person_id)
+    # Match sur un sujet d'enquête NOMMÉ : enrichissement déclenché avec (person_id, job_id).
+    from unittest.mock import ANY
+    mock_enrich.assert_called_once_with(person_id, ANY)
 
     assert resp2.status_code == 200
     data = resp2.json()
@@ -115,6 +125,31 @@ async def test_faces_upload_match_existing(client, auth_headers):
     assert data["person_id"] == person_id
     assert data["confidence_score"] == 0.65  # 1.0 - 0.35
     assert data["source"] == "investigation"
+
+
+@pytest.mark.asyncio
+async def test_faces_upload_match_unknown_no_enrich(client, auth_headers):
+    # Un match sur un visage encore "Inconnu" (jamais nommé) ne déclenche PAS d'enrichissement
+    # (rien à chercher) — évite des jobs "failed" à chaque ré-identification d'un inconnu.
+    jpeg1 = _make_jpeg(70, 70)
+    jpeg2 = _make_jpeg(75, 75)
+    with patch("app.api.face_routes.process_image", return_value=FAKE_PROCESS_RESULT), \
+         patch("app.api.face_routes.compare_embedding", return_value=None):
+        resp1 = await client.post(
+            "/api/faces/upload",
+            files={"file": ("f1.jpg", jpeg1, "image/jpeg")}, headers=auth_headers,
+        )
+    person_id = resp1.json()["person_id"]  # créée "Inconnu"
+
+    result2 = {**FAKE_PROCESS_RESULT, "hash": hashlib.sha256(jpeg2).hexdigest()}
+    with patch("app.api.face_routes.process_image", return_value=result2), \
+         patch("app.api.face_routes.compare_embedding", return_value=(person_id, 0.35)), \
+         patch("app.api.face_routes._background_enrich") as mock_enrich:
+        await client.post(
+            "/api/faces/upload",
+            files={"file": ("f2.jpg", jpeg2, "image/jpeg")}, headers=auth_headers,
+        )
+    mock_enrich.assert_not_called()
 
 
 # =============================================================

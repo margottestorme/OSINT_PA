@@ -18,14 +18,21 @@ face_router = APIRouter(prefix="/api/faces", tags=["reconnaissance faciale"])
 MAX_UPLOAD_SIZE = 5 * 1024 * 1024  # 5 Mo
 
 
-async def _background_enrich(person_id: int) -> None:
-    """Tâche de fond : enrichit une personne via le moteur OSINT."""
-    from app.osint.correlator import enrich_person
+async def _background_enrich(person_id: int, job_id: int | None = None) -> None:
+    """Tâche de fond : pipeline OSINT complet (nom → emails → domaines → HIBP → pseudos).
+
+    N'est ajouté qu'après un match sur un sujet source=="investigation" (voir plus bas) ; le
+    pipeline re-vérifie lui-même cette origine (défense en profondeur) et refuse tout sujet
+    consented_demo/lfw_dataset — un visage reconnu ne doit jamais déclencher le profilage
+    automatique d'un sujet consentant ou d'une entrée académique (cf. app/osint/pipeline.py).
+    `job_id` (créé côté requête) est mis à jour tout au long par le pipeline.
+    """
+    from app.osint.pipeline import full_enrich_after_face_match
     from app.db.session import async_session
 
     try:
         async with async_session() as db:
-            result = await enrich_person(person_id, db)
+            result = await full_enrich_after_face_match(person_id, db, job_id=job_id)
             logger.info(f"[faces/upload] Enrichissement terminé : {result}")
     except Exception as e:
         logger.error(f"[faces/upload] Erreur enrichissement person_id={person_id} : {e}")
@@ -116,10 +123,12 @@ async def upload_face(
         await create_audit_log(db, "face_upload", target=f"person_id={person_id},is_new=false", user_id=user_id, ip_address=ip)
         if background_tasks:
             # Enrichissement OSINT réservé aux personnes réellement investiguées : une entrée
-            # lfw_dataset est une personnalité publique du jeu de données académique, pas le
-            # sujet d'une enquête — la lancer dans le moteur OSINT n'a pas de sens ici.
-            if person.source == "investigation":
-                background_tasks.add_task(_background_enrich, person_id)
+            # lfw_dataset/consented_demo n'est pas le sujet d'une enquête — jamais de profilage
+            # automatique. Un job "pending" est créé pour le suivi UI (polling frontend).
+            if person.source == "investigation" and person.first_name != "Inconnu":
+                from app.osint.pipeline import create_pending_job
+                job_id = await create_pending_job(db, person_id, triggered_by="face_upload")
+                background_tasks.add_task(_background_enrich, person_id, job_id)
             background_tasks.add_task(index_person, person)  # confidence_score mis à jour
         return FaceUploadResponse(
             person_id=person_id,

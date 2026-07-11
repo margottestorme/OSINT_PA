@@ -116,6 +116,15 @@
                             <div style="font-size:1.05rem; font-weight:700;" id="match-name">—</div>
                             <div class="badge" id="match-score" style="margin-top:6px;">—</div>
                             <a class="btn btn-primary btn-sm" id="match-report" style="width:100%; margin-top:14px;"><i data-lucide="file-text"></i> Voir le rapport</a>
+                            <!-- Enrichissement OSINT : proposé mais JAMAIS auto-déclenché sur le
+                                 flux (voir CLAUDE.md). Visible uniquement pour un sujet d'enquete
+                                 (source=investigation) reconnu avec confiance > 70 %. -->
+                            <div id="match-enrich-wrap" class="hidden" style="margin-top:10px;">
+                                <div class="text-muted" style="font-size:0.8rem; margin-bottom:6px;">
+                                    <i data-lucide="sparkles" style="width:14px;"></i> Enrichissement OSINT disponible
+                                </div>
+                                <button class="btn btn-success btn-sm" id="stream-enrich-btn" style="width:100%;"><i data-lucide="zap"></i> Enrichir maintenant</button>
+                            </div>
                         </div>
                         <div id="identity-new" class="hidden">
                             <div class="flex items-center gap-8" style="color:var(--warning); font-weight:600; font-size:0.9rem;">

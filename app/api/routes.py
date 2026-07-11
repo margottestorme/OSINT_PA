@@ -9,12 +9,13 @@ from app.core.config import get_settings
 from app.core.security import authenticate_user, create_access_token, require_role, verify_token
 from app.core.audit import create_audit_log, get_client_ip, resolve_user_id
 from app.db.session import get_db
-from app.db.models import Correlation, Email, Person, SearchHistory, SearchResult, Site, hash_email
+from app.db.models import Correlation, Email, EnrichmentJob, Person, SearchHistory, SearchResult, Site, hash_email
 from app.schemas.schemas import (
     CorrelationResponse,
     EmailAddRequest,
     EmailResponse,
     EnrichResponse,
+    EnrichmentStatusResponse,
     FulltextResponse,
     FulltextScope,
     HealthResponse,
@@ -231,16 +232,32 @@ async def list_persons(
 async def update_person(
     person_id: int,
     body: PersonUpdate,
+    request: Request,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     token_data: dict = Depends(verify_token),
 ):
-    """Édition du nom/notes d'une personne (champs fournis uniquement)."""
+    """Édition du nom/notes/origine d'une personne (champs fournis uniquement).
+
+    Reclasser `source` est tracé dans l'audit : c'est ce champ qui décide si une personne
+    peut être profilée par le pipeline OSINT (seul `investigation` l'autorise).
+    """
     person = await db.get(Person, person_id)
     if not person:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Personne introuvable")
 
     updates = body.model_dump(exclude_unset=True)
+
+    # Audit du changement d'origine (contrôle de sécurité : active/désactive le profilage).
+    new_source = updates.get("source")
+    if new_source is not None and new_source != person.source:
+        user_id = await resolve_user_id(db, token_data.get("sub", "unknown"))
+        await create_audit_log(
+            db, "person_source_changed",
+            target=f"person_id={person_id},{person.source}->{new_source}",
+            user_id=user_id, ip_address=get_client_ip(request),
+        )
+
     for field, value in updates.items():
         setattr(person, field, value)
     await db.flush()
@@ -314,13 +331,18 @@ async def add_person_email(
     return email_obj
 
 
-async def _run_enrichment(person_id: int) -> None:
-    """Tâche de fond : ouvre sa propre session (celle de la requête est déjà fermée)."""
+async def _run_enrichment(person_id: int, job_id: int | None = None) -> None:
+    """Tâche de fond : ouvre sa propre session (celle de la requête est déjà fermée).
+
+    Lance le pipeline complet (nom → emails → domaines → HIBP → pseudos). Le pipeline est
+    lui-même gated à source=="investigation" (défense en profondeur) — voir app/osint/pipeline.py.
+    `job_id` (créé côté requête) est mis à jour tout au long par le pipeline.
+    """
     from app.db.session import async_session
-    from app.osint.correlator import enrich_person
+    from app.osint.pipeline import full_enrich_after_face_match
     try:
         async with async_session() as session:
-            result = await enrich_person(person_id, session)
+            result = await full_enrich_after_face_match(person_id, session, job_id=job_id)
             logger.info(f"[persons] Enrichissement manuel terminé : {result}")
     except Exception as e:
         logger.error(f"[persons] Erreur enrichissement manuel person_id={person_id} : {e}")
@@ -331,42 +353,86 @@ async def enrich_person_endpoint(
     person_id: int,
     request: Request,
     background_tasks: BackgroundTasks,
+    trigger: str = Query(default="manual", pattern="^(manual|stream)$"),
     db: AsyncSession = Depends(get_db),
     token_data: dict = Depends(verify_token),
 ):
-    """Lance manuellement le pivot OSINT (email → WHOIS/DNS/sources → nouveaux emails/sites,
-    jusqu'à 3 niveaux) sur une personne. Nécessite au moins un email déjà rattaché — voir
-    `POST /api/persons/{person_id}/emails`. Tourne en arrière-plan (résultat visible ensuite
-    sur le rapport/graphe), comme `POST /api/search`.
+    """Lance manuellement le pipeline OSINT complet (nom → emails → domaines → HIBP → pseudos,
+    jusqu'à 3 niveaux de pivot) sur une personne. Contrairement à l'ancien enrichissement, ne
+    nécessite PAS d'email préalable : le pipeline amorce la recherche à partir du nom. Tourne
+    en arrière-plan (résultat visible ensuite sur le rapport/graphe), comme `POST /api/search`.
+
+    Réservé aux vrais sujets d'enquête identifiés : refuse `consented_demo`/`lfw_dataset` (ne
+    jamais profiler un sujet consentant ou une entrée académique) et les personnes anonymes.
     """
     person = await db.get(Person, person_id)
     if not person:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Personne introuvable")
-    if person.source == "lfw_dataset":
+    if person.source != "investigation":
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "Impossible d'enrichir une entrée du jeu de données académique LFW.",
+            "Enrichissement réservé aux sujets d'enquête (source=investigation). Une entrée "
+            "consented_demo ou lfw_dataset ne doit jamais être profilée automatiquement.",
         )
-
-    has_email = await db.scalar(
-        select(func.count()).select_from(Email).where(Email.person_id == person_id)
-    )
-    if not has_email:
+    if person.first_name == "Inconnu":
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "Aucun email rattaché à cette personne — ajoutez-en un d'abord "
-            "(POST /api/persons/{id}/emails) avant de lancer l'enrichissement.",
+            "Personne non identifiée — renseignez d'abord son nom avant de lancer "
+            "l'enrichissement (le pipeline pivote à partir du nom).",
         )
 
     user_id = await resolve_user_id(db, token_data.get("sub", "unknown"))
     await create_audit_log(
-        db, "enrichment_launched", target=f"person_id={person_id}",
+        db, "enrichment_launched", target=f"person_id={person_id},trigger={trigger}",
         user_id=user_id, ip_address=get_client_ip(request),
     )
 
-    background_tasks.add_task(_run_enrichment, person_id)
+    # Job "pending" créé côté requête (committé par get_db) → visible immédiatement par le
+    # polling, puis mis à jour par le pipeline en tâche de fond.
+    from app.osint.pipeline import create_pending_job
+    job_id = await create_pending_job(db, person_id, triggered_by=trigger)
+
+    background_tasks.add_task(_run_enrichment, person_id, job_id)
 
     return EnrichResponse(message="Enrichissement lancé en arrière-plan", person_id=person_id)
+
+
+@router.get(
+    "/api/persons/{person_id}/enrichment_status",
+    response_model=EnrichmentStatusResponse, tags=["données"],
+)
+async def enrichment_status(
+    person_id: int,
+    db: AsyncSession = Depends(get_db),
+    token_data: dict = Depends(verify_token),
+):
+    """Statut du dernier enrichissement de la personne (pour le polling frontend).
+
+    404 si aucun enrichissement n'a jamais été lancé sur cette personne.
+    """
+    job = await db.scalar(
+        select(EnrichmentJob)
+        .where(EnrichmentJob.person_id == person_id)
+        .order_by(EnrichmentJob.id.desc())
+        .limit(1)
+    )
+    if not job:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Aucun enrichissement pour cette personne")
+
+    duration = None
+    if job.started_at and job.completed_at:
+        duration = round((job.completed_at - job.started_at).total_seconds(), 2)
+
+    return EnrichmentStatusResponse(
+        person_id=person_id,
+        status=job.status,
+        triggered_by=job.triggered_by,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        summary=job.summary,
+        error_message=job.error_message,
+        duration_seconds=duration,
+    )
 
 
 # --- Statistiques (KPI dashboard) ---

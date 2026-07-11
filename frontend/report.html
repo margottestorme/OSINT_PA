@@ -75,11 +75,27 @@
                         </div>
                         <div class="flex gap-8">
                             <button class="btn btn-ghost btn-sm" id="person-usernames"><i data-lucide="at-sign"></i> Rechercher ses pseudos</button>
-                            <button class="btn btn-ghost btn-sm" id="person-enrich" title="Pivote sur les emails connus (WHOIS/DNS/sources OSINT) pour trouver de nouveaux emails/sites"><i data-lucide="zap"></i> Enrichir</button>
+                            <button class="btn btn-ghost btn-sm" id="person-enrich" title="Pipeline OSINT complet a partir du nom : recherche par nom, emails, domaines, HIBP, enumeration de pseudos (sujets d'enquete uniquement)"><i data-lucide="zap"></i> Enrichir</button>
                             <button class="btn btn-ghost btn-sm" id="person-edit"><i data-lucide="edit-3"></i> Editer</button>
                         </div>
                     </div>
                     <div id="person-notes" class="alert hidden" style="background:#fffbeb; border:1px solid #fde68a; color:#92400e; margin-top:16px; margin-bottom:0;"></div>
+                </div>
+
+                <!-- Dernier enrichissement (Etapes 3+4) : visible uniquement si un job existe -->
+                <div class="card hidden" id="enrichment-section">
+                    <div class="flex between items-center" style="flex-wrap:wrap; gap:12px;">
+                        <h2 style="margin:0;"><i data-lucide="sparkles"></i> Dernier enrichissement</h2>
+                        <button class="btn btn-ghost btn-sm hidden" id="enrichment-rerun"><i data-lucide="refresh-cw"></i> Re-enrichir</button>
+                    </div>
+                    <div class="flex gap-8 items-center" style="margin-top:10px; flex-wrap:wrap;">
+                        <span class="status-badge" id="enrichment-status-badge">—</span>
+                        <span class="text-muted" id="enrichment-trigger">—</span>
+                        <span class="text-muted" id="enrichment-date">—</span>
+                        <span class="text-muted" id="enrichment-duration"></span>
+                    </div>
+                    <div id="enrichment-summary" class="text-muted" style="margin-top:8px; font-size:0.9rem;"></div>
+                    <div id="enrichment-error" class="alert alert-error hidden" style="margin-top:10px; margin-bottom:0;"></div>
                 </div>
 
                 <!-- Mini graphe -->

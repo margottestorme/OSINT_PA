@@ -2,7 +2,12 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# Origines valides d'une personne (Person.source) — voir CLAUDE.md, section reconnaissance
+# faciale. `investigation` = vrai sujet d'enquête (profilage OSINT autorisé) ; `consented_demo`
+# = sujet de démonstration consentant (jamais profilé) ; `lfw_dataset` = jeu académique figé.
+ALLOWED_PERSON_SOURCES = ("investigation", "consented_demo", "lfw_dataset")
 
 
 # --- Auth ---
@@ -27,6 +32,17 @@ class PersonUpdate(BaseModel):
     first_name: str | None = Field(default=None, min_length=1, max_length=100)
     last_name: str | None = Field(default=None, min_length=1, max_length=100)
     notes: str | None = Field(default=None, max_length=5000)
+    # Reclasser une personne change si elle peut être profilée par le pipeline OSINT
+    # (seul `investigation` l'autorise) — d'où une validation stricte contre l'allowlist,
+    # jamais une valeur arbitraire venue du client.
+    source: str | None = Field(default=None)
+
+    @field_validator("source")
+    @classmethod
+    def _validate_source(cls, v: str | None) -> str | None:
+        if v is not None and v not in ALLOWED_PERSON_SOURCES:
+            raise ValueError(f"source invalide (valeurs autorisées : {ALLOWED_PERSON_SOURCES})")
+        return v
 
 class PersonResponse(PersonBase):
     id: int
@@ -59,6 +75,18 @@ class EmailAddRequest(BaseModel):
 class EnrichResponse(BaseModel):
     message: str
     person_id: int
+
+
+class EnrichmentStatusResponse(BaseModel):
+    """Statut du dernier enrichissement d'une personne (suivi UI par polling)."""
+    person_id: int
+    status: str                              # pending / running / completed / failed
+    triggered_by: str                        # face_upload / manual / stream
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    summary: dict | None = None              # emails_found, sites_found, correlations_created, username_platforms_found
+    error_message: str | None = None
+    duration_seconds: float | None = None
 
 
 # --- Site ---
@@ -188,7 +216,7 @@ class StreamFaceResult(BaseModel):
     name: str | None = None
     confidence: float | None = None
     is_new: bool
-    source: str | None = None  # "investigation" / "lfw_dataset" — None si is_new
+    source: str | None = None  # "investigation" / "lfw_dataset" / "consented_demo" — None si is_new
 
 class StreamAnalyzeResponse(BaseModel):
     faces: list[StreamFaceResult]

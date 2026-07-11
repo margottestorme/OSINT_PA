@@ -276,3 +276,27 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+
+class EnrichmentJob(Base):
+    """Trace d'un enrichissement OSINT complet (pipeline post-identification faciale).
+
+    Permet à l'UI de suivre l'avancement d'un enrichissement asynchrone (déclenché à
+    l'upload, manuellement ou depuis le flux) : le frontend interroge
+    `GET /api/persons/{id}/enrichment_status` (dernier job) et poll jusqu'à `completed`.
+    Le pipeline lui-même reste réservé aux sujets `investigation` (voir app/osint/pipeline.py).
+    """
+    __tablename__ = "enrichment_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    person_id: Mapped[int] = mapped_column(ForeignKey("persons.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/running/completed/failed
+    triggered_by: Mapped[str] = mapped_column(String(20))  # face_upload / manual / stream
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Compteurs de résultats : {emails_found, sites_found, correlations_created, username_platforms_found}
+    summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
