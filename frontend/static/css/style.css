@@ -235,6 +235,14 @@ tbody tr:hover { background: #f8fafc; }
 .page-numbers button { min-width: 32px; }
 .page-numbers button.active:disabled { opacity: 1; background: var(--accent); color: #fff; cursor: default; }
 
+/* Résumé consolidé (résultats de recherche) */
+.summary-block { margin-bottom: 18px; }
+.summary-block:last-child { margin-bottom: 0; }
+.summary-block h3 { display: flex; align-items: center; gap: 8px; font-size: 0.92rem; font-weight: 600; margin-bottom: 8px; }
+.summary-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.summary-list li { font-size: 0.85rem; }
+.summary-list a { word-break: break-all; }
+
 /* Accordéon (détail source) */
 .accordion { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; margin-bottom: 10px; }
 .accordion summary {

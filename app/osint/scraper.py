@@ -30,6 +30,20 @@ SOCIAL_BLACKLIST = (
     "linkedin.com", "tiktok.com",
 )
 
+# Infrastructure Wikimedia : présente sur TOUTE page Wikipédia (barre de liens interlangues,
+# projets sœurs) quel que soit son contenu — aucun signal sur le sujet recherché, contrairement
+# à SOCIAL_BLACKLIST qui bloque le scraping, ceux-ci sont seulement exclus des entités EXTRAITES
+# (la page Wikipédia elle-même reste scrapée normalement, seuls ses liens de navigation le sont pas).
+_WIKIMEDIA_FAMILY = (
+    "wikipedia.org", "wikimedia.org", "wikidata.org", "wiktionary.org",
+    "wikibooks.org", "wikiquote.org", "wikisource.org", "wikinews.org",
+    "wikiversity.org", "mediawiki.org", "wikimediafoundation.org",
+)
+
+
+def _is_wikimedia_noise(host: str) -> bool:
+    return any(host == d or host.endswith("." + d) for d in _WIKIMEDIA_FAMILY)
+
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
 # Téléphones au format international (préfixe + obligatoire pour limiter le bruit)
 _PHONE_RE = re.compile(r"\+\d[\d\s().\-]{7,}\d")
@@ -102,8 +116,10 @@ async def scrape_entities(url: str) -> dict | None:
     for a in soup.find_all("a", href=True):
         parsed = urlparse(a["href"])
         if parsed.scheme in ("http", "https") and parsed.netloc:
-            urls.add(a["href"])
             host = parsed.netloc.lower()
+            if _is_wikimedia_noise(host):
+                continue  # lien de navigation Wikimedia, pas une entité liée au sujet
+            urls.add(a["href"])
             if host != base_host and not _is_blacklisted(a["href"]):
                 domains.add(host)
 

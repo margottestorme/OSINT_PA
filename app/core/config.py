@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     VIRUSTOTAL_API_KEY: str = ""    # Freemium : réputation/DNS passif de domaine
     OTX_API_KEY: str = ""           # Freemium : AlienVault OTX (passive DNS)
     HUNTER_API_KEY: str = ""        # Freemium : vérification d'email
+    BRAVE_SEARCH_API_KEY: str = ""  # Freemium : recherche web généraliste (brave.com/search/api)
 
     # --- Clés API énumération de pseudos (Module 15) — optionnelles, gratuites ---
     YOUTUBE_API_KEY: str = ""       # Google Cloud Console -> YouTube Data API v3 (clé simple)

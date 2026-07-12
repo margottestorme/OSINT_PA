@@ -325,7 +325,12 @@ async def _source_wikipedia(name: str) -> OsintResult | None:
                 params={
                     "action": "query",
                     "list": "search",
-                    "srsearch": name,
+                    # Phrase exacte (guillemets) : sans eux, MediaWiki fait une recherche floue
+                    # mot par mot sur tout le corpus et renvoie presque toujours quelque chose de
+                    # non pertinent (ex. "margotte storme" matchait "Margot" + "Storm" séparément
+                    # et remontait la page Wikipédia de Life Is Strange). Un vrai zéro résultat
+                    # est préférable à un faux positif trompeur.
+                    "srsearch": f'"{name}"',
                     "srlimit": 5,
                     "format": "json",
                 },
@@ -739,9 +744,60 @@ async def _source_hunter(email: str) -> OsintResult | None:
         return None
 
 
+async def _source_brave_search(entity: str, entity_type: str) -> OsintResult | None:
+    """Recherche web généraliste via l'API officielle Brave Search (clé requise).
+
+    Contrairement à DuckDuckGo Instant Answer (réponses instantanées réservées aux entités
+    notoires — Wikipedia, calculs... quasi toujours vide pour une personne privée), Brave
+    Search est un vrai moteur de recherche web indexant des pages arbitraires (profils
+    LinkedIn/YouTube/GitHub, sites personnels...). API officielle avec clé — jamais de
+    scraping direct de Google/Bing (cf. CLAUDE.md, écart CDC #3).
+    """
+    key = get_settings().BRAVE_SEARCH_API_KEY
+    if not key:
+        logger.debug("[brave] Pas de clé API — source désactivée")
+        return None
+
+    await _rate_limiter.acquire()
+    # Phrase exacte pour un nom composé : même logique que _source_wikipedia — évite qu'un
+    # moteur ne matche "margotte" et "storme" séparément sur des pages sans rapport.
+    query = f'"{entity}"' if entity_type == "name" and " " in entity else entity
+    logger.info(f"[brave] Recherche web pour {entity} ({entity_type})")
+
+    try:
+        headers = {**_UA, "Accept": "application/json", "X-Subscription-Token": key}
+        async with httpx.AsyncClient(timeout=_timeout, headers=headers) as client:
+            resp = await client.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                params={"q": query, "count": 10},
+            )
+        resp.raise_for_status()
+        items = resp.json().get("web", {}).get("results", [])
+        if not items:
+            logger.debug(f"[brave] Aucun résultat pour {entity}")
+            return None
+
+        urls = [i.get("url") for i in items if i.get("url")]
+        logger.info(f"[brave] {len(urls)} résultat(s) pour {entity}")
+        return _normalize(
+            "brave_search", entity, entity_type,
+            data=[
+                {"title": i.get("title"), "url": i.get("url"), "description": i.get("description")}
+                for i in items
+            ],
+            extracted={"urls": urls},
+        )
+    except Exception as e:
+        logger.warning(f"[brave] Échec pour {entity} : {e}")
+        return None
+
+
 # Enregistrement freemium (dormant tant que la clé n'est pas fournie)
 SOURCES["domain"].extend([_source_virustotal, _source_otx])
 SOURCES["email"].append(_source_hunter)
+SOURCES["email"].append(lambda e: _source_brave_search(e, "email"))
+SOURCES["domain"].append(lambda e: _source_brave_search(e, "domain"))
+SOURCES["name"].append(lambda e: _source_brave_search(e, "name"))
 
 
 # =============================================================
