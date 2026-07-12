@@ -104,7 +104,10 @@ def mock_hibp(pwned_text="", pwned_status=200, leak_json=None, leak_status=200,
 
 def settings_with(**kw):
     """Patche get_settings avec des clés API contrôlées."""
-    base = {"VIRUSTOTAL_API_KEY": "", "OTX_API_KEY": "", "HUNTER_API_KEY": "", "GITHUB_TOKEN": ""}
+    base = {
+        "VIRUSTOTAL_API_KEY": "", "OTX_API_KEY": "", "HUNTER_API_KEY": "",
+        "GITHUB_TOKEN": "", "BRAVE_SEARCH_API_KEY": "",
+    }
     base.update(kw)
     return patch("app.osint.engine.get_settings", return_value=Settings(**base))
 
@@ -171,6 +174,39 @@ async def test_wikipedia_empty():
 async def test_wikipedia_error():
     with mock_httpx_error():
         assert await engine._source_wikipedia("x") is None
+
+
+@pytest.mark.asyncio
+async def test_wikipedia_searches_exact_phrase():
+    """srsearch doit être entre guillemets (phrase exacte) — sans eux, MediaWiki fait une
+    recherche floue mot par mot et remonte des pages sans rapport (ex. "margotte storme"
+    matchait "Margot" + "Storm" séparément et renvoyait la page Wikipédia de Life Is Strange)."""
+    captured = {}
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json = MagicMock(return_value={"query": {"search": []}})
+    resp.raise_for_status = MagicMock()
+
+    async def _get(url, params=None):
+        captured["params"] = params
+        return resp
+
+    client = MagicMock()
+    client.get = _get
+    cm = MagicMock()
+
+    async def _aenter(*a):
+        return client
+
+    async def _aexit(*a):
+        return False
+
+    cm.__aenter__ = _aenter
+    cm.__aexit__ = _aexit
+    with patch("app.osint.engine.httpx.AsyncClient", return_value=cm):
+        await engine._source_wikipedia("margotte storme")
+
+    assert captured["params"]["srsearch"] == '"margotte storme"'
 
 
 # =============================================================
@@ -339,6 +375,12 @@ async def test_hunter_no_key():
         assert await engine._source_hunter("a@b.fr") is None
 
 
+@pytest.mark.asyncio
+async def test_brave_search_no_key():
+    with settings_with():
+        assert await engine._source_brave_search("Jean Dupont", "name") is None
+
+
 # =============================================================
 # Freemium — avec clé mockée → extracted correct
 # =============================================================
@@ -379,6 +421,81 @@ async def test_hunter_with_key():
     assert r["data"]["result"] == "deliverable"
     assert r["extracted"]["urls"] == ["http://x.fr/p"]
     assert r["extracted"]["domains"] == ["x.fr"]
+
+
+@pytest.mark.asyncio
+async def test_brave_search_with_key_extracts_urls():
+    brave = {"web": {"results": [
+        {"title": "Jean Dupont - LinkedIn", "url": "https://linkedin.com/in/jdupont", "description": "..."},
+        {"title": "Jean Dupont - YouTube", "url": "https://youtube.com/@jdupont", "description": "..."},
+    ]}}
+    with settings_with(BRAVE_SEARCH_API_KEY="K"), mock_httpx(200, brave):
+        r = await engine._source_brave_search("Jean Dupont", "name")
+    assert r["source"] == "brave_search" and r["type"] == "name"
+    assert r["extracted"]["urls"] == ["https://linkedin.com/in/jdupont", "https://youtube.com/@jdupont"]
+
+
+@pytest.mark.asyncio
+async def test_brave_search_empty():
+    with settings_with(BRAVE_SEARCH_API_KEY="K"), mock_httpx(200, {"web": {"results": []}}):
+        assert await engine._source_brave_search("zzzz", "name") is None
+
+
+@pytest.mark.asyncio
+async def test_brave_search_error():
+    with settings_with(BRAVE_SEARCH_API_KEY="K"), mock_httpx_error():
+        assert await engine._source_brave_search("Jean Dupont", "name") is None
+
+
+@pytest.mark.asyncio
+async def test_brave_search_quotes_multi_word_name():
+    """Même logique que Wikipedia (test_wikipedia_searches_exact_phrase) : un nom composé
+    doit être recherché en phrase exacte pour éviter les faux positifs par mot isolé."""
+    captured = {}
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json = MagicMock(return_value={"web": {"results": []}})
+    resp.raise_for_status = MagicMock()
+
+    async def _get(url, params=None):
+        captured["params"] = params
+        return resp
+
+    client = MagicMock()
+    client.get = _get
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=client)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    with settings_with(BRAVE_SEARCH_API_KEY="K"), \
+         patch("app.osint.engine.httpx.AsyncClient", return_value=cm):
+        await engine._source_brave_search("margotte storme", "name")
+
+    assert captured["params"]["q"] == '"margotte storme"'
+
+
+@pytest.mark.asyncio
+async def test_brave_search_email_not_quoted():
+    """Un email (jamais multi-mots) n'a pas besoin de guillemets."""
+    captured = {}
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json = MagicMock(return_value={"web": {"results": []}})
+    resp.raise_for_status = MagicMock()
+
+    async def _get(url, params=None):
+        captured["params"] = params
+        return resp
+
+    client = MagicMock()
+    client.get = _get
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=client)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    with settings_with(BRAVE_SEARCH_API_KEY="K"), \
+         patch("app.osint.engine.httpx.AsyncClient", return_value=cm):
+        await engine._source_brave_search("jean@x.fr", "email")
+
+    assert captured["params"]["q"] == "jean@x.fr"
 
 
 # =============================================================

@@ -1274,12 +1274,15 @@ const SOURCE_ICONS = {
     shodan_internetdb: "shield", wikipedia: "book-open", github: "code",
     "crt.sh": "lock", gravatar: "user", duckduckgo: "search",
     virustotal: "shield-alert", otx: "shield", hunter: "mail",
+    hibp: "shield-alert", scraper: "file-search", brave_search: "search",
 };
 const SOURCE_LABELS = {
     dns: "DNS", dns_mx: "DNS MX", whois: "WHOIS", rdap: "RDAP",
     shodan_internetdb: "Shodan InternetDB", wikipedia: "Wikipedia", github: "GitHub",
     "crt.sh": "crt.sh", gravatar: "Gravatar", duckduckgo: "DuckDuckGo",
     virustotal: "VirusTotal", otx: "AlienVault OTX", hunter: "Hunter.io",
+    hibp: "Fuites de données (HIBP / LeakCheck)", scraper: "Contenu des pages liées",
+    brave_search: "Brave Search",
 };
 // type d'entité → { classe CSS, type de recherche si cliquable (sinon null) }
 const ENTITY_TYPES = {
@@ -1305,6 +1308,7 @@ function initResults() {
         return;
     }
     document.getElementById("sources-container").addEventListener("click", onEntityClick);
+    document.getElementById("summary-container").addEventListener("click", onEntityClick);
     loadResults(Number(id));
 }
 
@@ -1339,6 +1343,9 @@ async function loadResults(searchId) {
         if (results.length === 0) {
             document.getElementById("results-empty").classList.remove("hidden");
         } else {
+            document.getElementById("summary-container").innerHTML =
+                buildSummary(results, search.query, search.query_type) || "";
+            document.getElementById("tech-detail-count").textContent = results.length;
             const container = document.getElementById("sources-container");
             container.innerHTML = results.map(renderSourceCard).join("");
             lucide.createIcons();
@@ -1353,6 +1360,101 @@ async function loadResults(searchId) {
 function countEntities(extracted) {
     if (!extracted) return 0;
     return Object.values(extracted).reduce((s, arr) => s + (Array.isArray(arr) ? arr.length : 0), 0);
+}
+
+const SUMMARY_BADGES_MAX = 30; // évite qu'un domaine avec des centaines de sous-domaines (crt.sh) noie le résumé
+
+// Regroupe les résultats bruts (organisés par SOURCE technique) en un résumé organisé par
+// SENS : sites/profils trouvés, exposition dans des fuites de données, autres identifiants.
+// Renvoie null si rien n'est exploitable (pas de section vide affichée dans ce cas).
+function buildSummary(results, query, queryType) {
+    const urlSources = new Map();   // url -> Set(libellés de source)
+    const otherEmails = new Set();
+    const otherDomains = new Set();
+    let hibpResult = null;
+    const queryLower = (query || "").toLowerCase();
+
+    for (const r of results) {
+        const ex = r.extracted || {};
+        const label = SOURCE_LABELS[r.source] || r.source;
+        for (const u of ex.urls || []) {
+            if (!urlSources.has(u)) urlSources.set(u, new Set());
+            urlSources.get(u).add(label);
+        }
+        for (const e of ex.emails || []) {
+            if (e.toLowerCase() !== queryLower) otherEmails.add(e);
+        }
+        for (const d of ex.domains || []) {
+            if (d.toLowerCase() !== queryLower) otherDomains.add(d);
+        }
+        if (r.source === "hibp") hibpResult = r;
+    }
+
+    const sections = [];
+
+    // --- Sites & profils trouvés ---
+    if (urlSources.size > 0) {
+        const items = [...urlSources.entries()].map(([url, sources]) =>
+            `<li><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a> ` +
+            `<span class="text-muted" style="font-size:0.78rem;">via ${escapeHtml([...sources].join(", "))}</span></li>`
+        ).join("");
+        sections.push(
+            `<div class="summary-block"><h3><i data-lucide="link"></i> Sites & profils trouvés (${urlSources.size})</h3>` +
+            `<ul class="summary-list">${items}</ul></div>`
+        );
+    } else if (queryType === "email") {
+        sections.push(
+            `<div class="summary-block"><h3><i data-lucide="link"></i> Sites & profils trouvés</h3>` +
+            `<p class="text-muted" style="font-size:0.85rem;">Aucun site public trouvé associé à cet email.</p></div>`
+        );
+    }
+
+    // --- Exposition dans des fuites de données (uniquement si la source HIBP a répondu) ---
+    if (hibpResult) {
+        const d = hibpResult.data || {};
+        const pwned = d.pwned_password_count;
+        const leakSources = d.leakcheck_sources || [];
+        let body = "";
+        if (pwned) {
+            body += `<p>⚠️ Cet email, utilisé comme mot de passe, a été vu <strong>${pwned}</strong> fois ` +
+                `dans des fuites de mots de passe connues (HIBP Pwned Passwords).</p>`;
+        }
+        if (d.leakcheck_found) {
+            body += `<p>⚠️ Cet email est apparu dans des fuites de données` +
+                (leakSources.length ? ` provenant de : <strong>${escapeHtml(leakSources.join(", "))}</strong>` : "") +
+                ` (LeakCheck.io).</p>`;
+        }
+        if (!pwned && !d.leakcheck_found) {
+            body = `<p class="text-muted" style="font-size:0.85rem;">Aucune exposition connue trouvée ` +
+                `dans les fuites de données publiques consultées.</p>`;
+        }
+        sections.push(
+            `<div class="summary-block"><h3><i data-lucide="shield-alert"></i> Exposition dans des fuites de données</h3>${body}</div>`
+        );
+    }
+
+    // --- Autres identifiants associés (emails/domaines, hors la requête elle-même) ---
+    const otherItems = [...otherEmails, ...otherDomains];
+    if (otherItems.length > 0) {
+        const shown = otherItems.slice(0, SUMMARY_BADGES_MAX);
+        const badges = shown.map((v) => {
+            const isEmail = otherEmails.has(v);
+            const cls = isEmail ? "email" : "domain";
+            const type = isEmail ? "email" : "domain";
+            return `<span class="badge ${cls} clickable" data-search="${escapeHtml(v)}" data-type="${type}" ` +
+                `title="Rechercher ${escapeHtml(v)}">${escapeHtml(v)}</span>`;
+        }).join("");
+        const more = otherItems.length > SUMMARY_BADGES_MAX
+            ? `<span class="text-muted" style="font-size:0.8rem;"> +${otherItems.length - SUMMARY_BADGES_MAX} de plus (voir le détail technique ci-dessous)</span>`
+            : "";
+        sections.push(
+            `<div class="summary-block"><h3><i data-lucide="link-2"></i> Autres identifiants associés (${otherItems.length})</h3>` +
+            `<div class="badge-group">${badges}</div>${more}</div>`
+        );
+    }
+
+    if (sections.length === 0) return null;
+    return `<div class="card" id="results-summary"><h2><i data-lucide="sparkles"></i> Résumé</h2>${sections.join("")}</div>`;
 }
 
 function renderSourceCard(r) {

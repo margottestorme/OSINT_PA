@@ -96,6 +96,22 @@ def test_is_blacklisted_regular(url):
     assert scraper._is_blacklisted(url) is False
 
 
+@pytest.mark.parametrize("host", [
+    "fr.wikipedia.org", "ar.wikipedia.org", "wikipedia.org",
+    "www.wikidata.org", "wikimedia.org", "commons.wikimedia.org",
+    "www.mediawiki.org", "wikimediafoundation.org",
+])
+def test_is_wikimedia_noise_true(host):
+    assert scraper._is_wikimedia_noise(host) is True
+
+
+@pytest.mark.parametrize("host", [
+    "example.com", "not-wikipedia.org.evil.com", "www.jeuxvideo.com",
+])
+def test_is_wikimedia_noise_false(host):
+    assert scraper._is_wikimedia_noise(host) is False
+
+
 # =============================================================
 # fetch_page
 # =============================================================
@@ -199,6 +215,22 @@ async def test_scrape_entities_extraction():
     assert r["names"] == ["Jean Dupont - Page", "Titre Principal", "Sous-titre"]
     assert r["phones"] == ["+33 1 23 45 67 89"]
     assert r["description"] == "Description de test"
+
+
+@pytest.mark.asyncio
+async def test_scrape_entities_excludes_wikimedia_navigation_links():
+    """Une page Wikipédia liste ~80 liens interlangues/projets sœurs sur CHAQUE article —
+    aucun rapport avec le sujet recherché. Ils ne doivent polluer ni domains ni urls."""
+    html = """<html><body>
+    <a href="https://ar.wikipedia.org/wiki/Sujet">ar</a>
+    <a href="https://www.wikidata.org/wiki/Q123">wikidata</a>
+    <a href="https://commons.wikimedia.org/wiki/File:x">commons</a>
+    <a href="https://vraie-source.fr/article">source pertinente</a>
+    </body></html>"""
+    with patch("app.osint.scraper.fetch_page", AsyncMock(return_value=html)):
+        r = await scraper.scrape_entities("https://fr.wikipedia.org/wiki/Sujet")
+    assert r["domains"] == ["vraie-source.fr"]
+    assert r["urls"] == ["https://vraie-source.fr/article"]
 
 
 @pytest.mark.asyncio
