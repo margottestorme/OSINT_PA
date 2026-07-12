@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?logo=postgresql)
-![Tests](https://img.shields.io/badge/tests-293%20passed%20%2B8%20PG-brightgreen)
+![Tests](https://img.shields.io/badge/tests-393%20passed%20%2B8%20PG-brightgreen)
 ![License](https://img.shields.io/badge/licence-usage%20acad%C3%A9mique-orange)
 
 Plateforme OSINT (Open Source Intelligence) académique développée dans le cadre du **projet annuel ESGI** en cybersécurité (4e année). Elle permet la recherche, l'extraction et la corrélation d'entités à partir de sources publiques et légales, la reconnaissance faciale sur images statiques, et l'enrichissement automatique croisé entre les deux modules.
@@ -435,7 +435,7 @@ Passage d'un **ensemble d'outils** à une **plateforme d'investigation** : les e
 Migration `b2c3d4e5f6a7` : `username_searches` (username, analyste, total/trouvés, statut) et `username_results` (plateforme, url, catégorie, found, temps de réponse, erreur).
 
 ### ✅ CDC 100 % implémenté (+ extensions)
-L'ensemble des exigences du cahier des charges est couvert : recherche/corrélation OSINT multi-sources, reconnaissance faciale (upload + webcam temps réel côté client), dashboard & graphe, sécurité/RBAC/audit, indexation full-text (Elasticsearch), **chiffrement au repos (pgcrypto)** et **vérification de fuites de données (HIBP/LeakCheck)**. Au-delà du CDC, la plateforme intègre la **gestion d'enquêtes et le rapport PDF forensique (Module 14)** et l'**énumération de pseudos multi-plateformes (Module 15)** — le tout couvert par **293 tests** (+ 8 dédiés au chiffrement sur PostgreSQL).
+L'ensemble des exigences du cahier des charges est couvert : recherche/corrélation OSINT multi-sources, reconnaissance faciale (upload + webcam temps réel côté client), dashboard & graphe, sécurité/RBAC/audit, indexation full-text (Elasticsearch), **chiffrement au repos (pgcrypto)** et **vérification de fuites de données (HIBP/LeakCheck)**. Au-delà du CDC, la plateforme intègre la **gestion d'enquêtes et le rapport PDF forensique (Module 14)** et l'**énumération de pseudos multi-plateformes (Module 15)** — le tout couvert par **393 tests** (+ 8 dédiés au chiffrement sur PostgreSQL).
 
 ### Corrections récentes (suite aux tests manuels)
 - **Graphe global vide (422)** : la borne `limit` max des endpoints de liste (`persons`, `correlations`, `emails`, `sites`, `history`) est passée à **500** — le graphe charge `limit=200` et recevait un `422` (persons était plafonné à 100), ce qui vidait le graphe.
@@ -738,19 +738,23 @@ osint-platform/
 │   └── env.py                  # Configuration Alembic
 ├── tests/
 │   ├── conftest.py             # Fixtures pytest (DB en mémoire, auth)
-│   ├── test_api.py             # Tests des endpoints OSINT (29 tests)
-│   ├── test_engine.py          # Tests du moteur OSINT (16 tests)
-│   ├── test_face_api.py        # Tests des endpoints faciaux (13 tests)
+│   ├── test_api.py             # Tests des endpoints OSINT (53 tests)
+│   ├── test_engine.py          # Tests du moteur OSINT (17 tests)
+│   ├── test_face_api.py        # Tests des endpoints faciaux (17 tests)
 │   ├── test_correlator.py       # Tests du corrélateur (6 tests)
-│   ├── test_facial.py          # Tests du moteur facial (17 tests)
+│   ├── test_facial.py          # Tests du moteur facial (20 tests)
 │   ├── test_rate_limiter.py    # Tests du rate limiter (2 tests)
-│   ├── test_report_api.py      # Tests de l'endpoint rapport (5 tests)
+│   ├── test_report_api.py      # Tests de l'endpoint rapport (6 tests)
 │   ├── test_frontend_routes.py # Tests des routes frontend (8 tests)
-│   ├── test_security.py        # Tests sécurité (29 tests)
-│   ├── test_sources.py         # Tests sources OSINT + HIBP (39 tests)
-│   ├── test_scraper.py         # Tests du scraping BeautifulSoup (28 tests)
+│   ├── test_security.py        # Tests sécurité (30 tests)
+│   ├── test_sources.py         # Tests sources OSINT + HIBP (46 tests)
+│   ├── test_scraper.py         # Tests du scraping BeautifulSoup (40 tests)
 │   ├── test_cli.py             # Tests du CLI (4 tests)
-│   ├── test_search_results.py  # Tests persistance recherches (2 tests)
+│   ├── test_search_results.py  # Tests persistance recherches (3 tests)
+│   ├── test_investigations.py  # Tests gestion d'enquêtes — Module 14 (27 tests)
+│   ├── test_username.py        # Tests énumération de pseudos — Module 15 (49 tests)
+│   ├── test_pipeline.py        # Tests pipeline enrichissement post-facial (11 tests)
+│   ├── test_index_local_faces.py # Tests indexation sujets consentants démo (11 tests)
 │   ├── test_elastic.py         # Tests Elasticsearch — Module 11 (26 tests)
 │   ├── test_crypto.py          # Tests chiffrement pgcrypto — Module 12 (8 tests, PostgreSQL)
 │   └── test_stream.py          # Tests stream webcam (16 tests)
@@ -786,19 +790,24 @@ python -m pytest tests/ -v
 python -m pytest tests/ -v --cov=app
 
 # Tests par module
-python -m pytest tests/test_api.py -v           # 29 tests API OSINT
-python -m pytest tests/test_engine.py -v        # 16 tests moteur OSINT
-python -m pytest tests/test_face_api.py -v      # 13 tests API faciale
-python -m pytest tests/test_facial.py -v        # 17 tests moteur facial
+python -m pytest tests/test_api.py -v           # 53 tests API OSINT
+python -m pytest tests/test_engine.py -v        # 17 tests moteur OSINT
+python -m pytest tests/test_face_api.py -v      # 17 tests API faciale
+python -m pytest tests/test_facial.py -v        # 20 tests moteur facial
 python -m pytest tests/test_rate_limiter.py -v  # 2 tests rate limiter
 python -m pytest tests/test_correlator.py -v    # 6 tests corrélateur
-python -m pytest tests/test_report_api.py -v    # 5 tests rapport personne
-python -m pytest tests/test_frontend_routes.py -v # 6 tests routes frontend
-python -m pytest tests/test_security.py -v        # 25 tests sécurité
-python -m pytest tests/test_sources.py -v         # 39 tests sources OSINT + HIBP
-python -m pytest tests/test_scraper.py -v         # 28 tests scraping BeautifulSoup
-python -m pytest tests/test_search_results.py -v  # 2 tests persistance recherches
-python -m pytest tests/test_stream.py -v          # 16 tests stream webcam
+python -m pytest tests/test_report_api.py -v    # 6 tests rapport personne
+python -m pytest tests/test_frontend_routes.py -v # 8 tests routes frontend
+python -m pytest tests/test_security.py -v        # 30 tests sécurité
+python -m pytest tests/test_sources.py -v         # 46 tests sources OSINT + HIBP
+python -m pytest tests/test_scraper.py -v         # 40 tests scraping BeautifulSoup
+python -m pytest tests/test_cli.py -v             # 4 tests CLI
+python -m pytest tests/test_search_results.py -v  # 3 tests persistance recherches
+python -m pytest tests/test_investigations.py -v  # 27 tests gestion d'enquêtes (Module 14)
+python -m pytest tests/test_username.py -v        # 49 tests énumération de pseudos (Module 15)
+python -m pytest tests/test_pipeline.py -v        # 11 tests pipeline enrichissement post-facial
+python -m pytest tests/test_index_local_faces.py -v # 11 tests indexation sujets consentants
+python -m pytest tests/test_stream.py -v          # 17 tests stream webcam
 python -m pytest tests/test_elastic.py -v         # 26 tests Elasticsearch (Module 11)
 
 # Tests de chiffrement pgcrypto — PostgreSQL requis (skippés sur SQLite)
@@ -810,7 +819,7 @@ TEST_DATABASE_URL=postgresql+asyncpg://osint_user:<password>@localhost:5432/osin
   python -m pytest tests/ -v
 ```
 
-**243 tests** (+ 8 dédiés au chiffrement, sur PostgreSQL) couvrent :
+**393 tests** (+ 8 dédiés au chiffrement, sur PostgreSQL) couvrent :
 - Authentification JWT (token valide, expiré, invalide, identifiants erronés)
 - Validation des inputs (injection SQL bloquée par enum Pydantic)
 - Rate limiting (429 après 10 requêtes/minute)

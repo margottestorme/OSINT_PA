@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 
-security_scheme = HTTPBearer(auto_error=True)
+security_scheme = HTTPBearer(auto_error=False)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # Hash bcrypt précalculé pour un mot de passe factice (S9, anti-timing).
@@ -33,7 +33,16 @@ def create_access_token(data: dict, expires_minutes: int = 15) -> str:
     return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
-def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security_scheme)) -> dict:
+def verify_token(credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme)) -> dict:
+    # HTTPBearer(auto_error=False) renvoie None (au lieu de lever un 403 lui-même) quand
+    # aucun header Authorization n'est fourni — on distingue explicitement ce cas pour
+    # renvoyer 401 (absence d'authentification), sémantiquement correct au sens HTTP,
+    # plutôt que le 403 (accès refusé) que FastAPI renverrait par défaut ici.
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentification requise",
+        )
     settings = get_settings()
     try:
         payload = jwt.decode(

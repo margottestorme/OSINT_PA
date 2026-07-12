@@ -44,7 +44,7 @@ profondeur — c'est la meilleure source pour comprendre le *pourquoi* de chaque
 | Chiffrement | pgcrypto (PostgreSQL) via `EncryptedText` | [app/db/crypto.py](app/db/crypto.py) |
 | HTTP externe | httpx (async) | remplace `requests` du CDC (contrainte async) |
 | Frontend | HTML/CSS/JS vanilla, vis.js pour les graphes | aucun framework JS, servi par FastAPI/Jinja2 |
-| Tests | pytest + pytest-asyncio + pytest-cov | 243 tests (+8 pgcrypto sur PostgreSQL) |
+| Tests | pytest + pytest-asyncio + pytest-cov | 393 tests (+8 pgcrypto sur PostgreSQL) |
 | Conteneurs | Docker Compose (app + db + redis + elasticsearch) | |
 
 **Absent de `requirements.txt` malgré le CDC** : `scikit-learn` (le matching facial n'utilise que
@@ -92,7 +92,7 @@ alembic/versions/             # 8 migrations, dont f1a2b3c4d5e6 (chiffrement + b
 frontend/                     # 7 pages HTML vanilla + static/{css,js}
   ├── index.html (login) · dashboard.html · results.html · search.html
   └── graph.html (vis.js) · report.html · stream.html
-tests/                        # 16 fichiers, 243 tests (miroir de la structure app/)
+tests/                        # 20 fichiers, 393 tests (miroir de la structure app/)
 scripts/
   ├── reindex.py              # Réindexation PostgreSQL → Elasticsearch (barre de progression)
   ├── seed_demo.py             # Jeu de données fictif idempotent pour démo
