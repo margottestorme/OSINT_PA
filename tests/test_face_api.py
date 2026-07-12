@@ -364,3 +364,31 @@ async def test_faces_persons_pagination(client, auth_headers):
 async def test_faces_persons_invalid_limit(client, auth_headers):
     resp = await client.get("/api/faces/persons?limit=0", headers=auth_headers)
     assert resp.status_code == 422
+
+
+# =============================================================
+# GET /api/faces/persons — en-tête X-Total-Count (pagination : numéros de page, dernière page)
+# =============================================================
+
+@pytest.mark.asyncio
+async def test_faces_persons_total_count_header_empty(client, auth_headers):
+    resp = await client.get("/api/faces/persons", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.headers["X-Total-Count"] == "0"
+
+
+@pytest.mark.asyncio
+async def test_faces_persons_total_count_header_reflects_total_not_page_size(client, auth_headers):
+    jpeg = _make_jpeg()
+    with patch("app.api.face_routes.process_image", return_value=FAKE_PROCESS_RESULT), \
+         patch("app.api.face_routes.compare_embedding", return_value=None):
+        await client.post(
+            "/api/faces/upload",
+            files={"file": ("test.jpg", jpeg, "image/jpeg")},
+            headers=auth_headers,
+        )
+
+    resp = await client.get("/api/faces/persons?limit=1&offset=0", headers=auth_headers)
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
+    assert resp.headers["X-Total-Count"] == "1"  # total réel, pas la taille de la page renvoyée

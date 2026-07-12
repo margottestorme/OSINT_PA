@@ -83,6 +83,7 @@ app.add_middleware(
     allow_origins=[o.strip() for o in settings.ALLOWED_ORIGINS.split(",")],
     allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type"],
+    expose_headers=["X-Total-Count"],  # pagination : total exposé en en-tête (GET /api/faces/persons)
 )
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)

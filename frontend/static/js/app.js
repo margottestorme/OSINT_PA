@@ -265,7 +265,7 @@ async function loadPersons(offset) {
     errorEl.classList.add("hidden");
 
     try {
-        const data = await API.listFacePersons(PAGE_SIZE, offset);
+        const { data, total } = await API.listFacePersons(PAGE_SIZE, offset);
         personsCache = {};
         if (data.length === 0 && offset === 0) {
             empty.classList.remove("hidden");
@@ -290,7 +290,7 @@ async function loadPersons(offset) {
             table.classList.remove("hidden");
             lucide.createIcons();
         }
-        updatePagination("persons", offset, data.length);
+        updatePagination("persons", offset, data.length, total);
     } catch (err) {
         errorEl.textContent = err.message;
         errorEl.classList.remove("hidden");
@@ -434,6 +434,9 @@ async function loadHistory(offset) {
 
 
 // --- Pagination ---
+const PAGE_NUMBERS_WINDOW = 4; // nombre de numéros affichés : page courante + les suivants
+const paginationLastPage = {}; // { [prefix]: dernière page connue } — lu par le bouton "dernière page"
+
 function initPagination(prefix, loadFn, getOffset) {
     document.getElementById(prefix + "-prev").addEventListener("click", () => {
         loadFn(Math.max(0, getOffset() - PAGE_SIZE));
@@ -441,15 +444,68 @@ function initPagination(prefix, loadFn, getOffset) {
     document.getElementById(prefix + "-next").addEventListener("click", () => {
         loadFn(getOffset() + PAGE_SIZE);
     });
+    // Boutons "première/dernière page" («« / »») — présents uniquement pour les sections qui
+    // exposent un total (cf. updatePagination), ex. persons-first/persons-last dans dashboard.html.
+    const firstBtn = document.getElementById(prefix + "-first");
+    if (firstBtn) {
+        firstBtn.addEventListener("click", () => loadFn(0));
+    }
+    const lastBtn = document.getElementById(prefix + "-last");
+    if (lastBtn) {
+        lastBtn.addEventListener("click", () => {
+            const lastPage = paginationLastPage[prefix] || 1;
+            loadFn((lastPage - 1) * PAGE_SIZE);
+        });
+    }
+    // Numéros de page cliquables (délégation : les boutons sont recréés à chaque page).
+    const numbers = document.getElementById(prefix + "-page-numbers");
+    if (numbers) {
+        numbers.addEventListener("click", (e) => {
+            const btn = e.target.closest("[data-page]");
+            if (!btn || btn.disabled) return;
+            loadFn((parseInt(btn.getAttribute("data-page"), 10) - 1) * PAGE_SIZE);
+        });
+    }
 }
 
-function updatePagination(prefix, offset, count) {
+function updatePagination(prefix, offset, count, total) {
     const prev = document.getElementById(prefix + "-prev");
     const next = document.getElementById(prefix + "-next");
     const info = document.getElementById(prefix + "-page-info");
+    const numbers = document.getElementById(prefix + "-page-numbers");
+    const firstBtn = document.getElementById(prefix + "-first");
+    const lastBtn = document.getElementById(prefix + "-last");
+    const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
     prev.disabled = offset === 0;
-    next.disabled = count < PAGE_SIZE;
-    info.textContent = "Page " + (Math.floor(offset / PAGE_SIZE) + 1);
+    if (firstBtn) firstBtn.disabled = offset === 0;
+
+    // `total` est optionnel (ex. historique, qui n'expose pas encore ce compte côté API) :
+    // sans lui on retombe sur l'affichage "Page X" existant, sans numéros ni bouton dernière page.
+    if (total === undefined) {
+        next.disabled = count < PAGE_SIZE;
+        info.textContent = "Page " + currentPage;
+        return;
+    }
+
+    const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    paginationLastPage[prefix] = lastPage;
+    next.disabled = currentPage >= lastPage;
+    if (lastBtn) lastBtn.disabled = currentPage >= lastPage;
+    info.textContent = `Page ${currentPage} / ${lastPage}`;
+
+    if (numbers) {
+        numbers.innerHTML = "";
+        const lastShown = Math.min(currentPage + PAGE_NUMBERS_WINDOW - 1, lastPage);
+        for (let p = currentPage; p <= lastShown; p++) {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "btn btn-sm " + (p === currentPage ? "btn-primary active" : "btn-ghost");
+            btn.textContent = String(p);
+            btn.setAttribute("data-page", String(p));
+            if (p === currentPage) btn.disabled = true;
+            numbers.appendChild(btn);
+        }
+    }
 }
 
 
