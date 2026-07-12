@@ -1526,6 +1526,9 @@ let mediaStream = null;
 let analyzeInFlight = false;   // skip un frame tant que l'analyse précédente n'est pas finie
 let fpsSamples = [];           // horodatages des analyses réussies (FPS effectif sur 1 s)
 let streamMatchPersonId = null; // person_id du dernier match enrichissable (bouton cliquable)
+let lastKnownMatch = null;     // dernier visage reconnu (survit à quelques frames sans match)
+let matchMissStreak = 0;       // frames consécutives sans ce match, avant abandon
+const MATCH_MISS_TOLERANCE = 4; // ~2s à 500ms/frame — absorbe le clignotement frame-à-frame
 
 function initStream() {
     const user = currentUser();
@@ -1652,6 +1655,9 @@ function resetStreamStats() {
     document.getElementById("stat-fps").textContent = "—";
     document.getElementById("stat-faces").textContent = "—";
     document.getElementById("stat-matches").textContent = "—";
+    lastKnownMatch = null;
+    matchMissStreak = 0;
+    streamMatchPersonId = null;
     showIdentity("empty");
 }
 
@@ -1751,24 +1757,44 @@ function updateStreamStats(data) {
     document.getElementById("stat-matches").textContent = known.length;
 
     if (known.length) {
-        const m = known[0];
-        document.getElementById("match-name").innerHTML =
-            escapeHtml(m.name || "?") + sourceBadgeHtml(m.source);
-        document.getElementById("match-score").textContent =
-            `${Math.round((m.confidence || 0) * 100)}% de confiance`;
-        document.getElementById("match-report").href = "/report?id=" + m.person_id;
-        // Enrichissement OSINT proposé (jamais auto-déclenché) uniquement pour un vrai sujet
-        // d'enquête reconnu avec confiance > 70 % — un sujet consentant / une entrée LFW n'y
-        // a jamais droit (le backend le refuserait de toute façon).
-        const enrichable = m.source === "investigation" && (m.confidence || 0) > 0.7;
-        streamMatchPersonId = enrichable ? m.person_id : null;
-        document.getElementById("match-enrich-wrap").classList.toggle("hidden", !enrichable);
-        showIdentity("match");
+        matchMissStreak = 0;
+        lastKnownMatch = known[0];
+        renderMatch(lastKnownMatch);
+    } else if (lastKnownMatch && matchMissStreak < MATCH_MISS_TOLERANCE) {
+        // Match perdu sur CETTE frame (angle, éclairage, bruit d'embedding) : chaque frame est
+        // comparée indépendamment côté serveur (aucune mémoire d'une requête à l'autre), donc
+        // un aller-retour "reconnu"/"non reconnu" de quelques frames est attendu, pas une vraie
+        // disparition. On continue d'afficher le dernier match connu quelques cycles avant de
+        // l'abandonner, sinon la carte d'identité (et le bouton Enrichir) clignote en continu.
+        matchMissStreak++;
+        renderMatch(lastKnownMatch);
     } else if (data.faces_count > 0) {
+        lastKnownMatch = null;
         showIdentity("new");
     } else {
+        lastKnownMatch = null;
+        matchMissStreak = 0;
         showIdentity("empty");
     }
+}
+
+function renderMatch(m) {
+    document.getElementById("match-name").innerHTML =
+        escapeHtml(m.name || "?") + sourceBadgeHtml(m.source);
+    document.getElementById("match-score").textContent =
+        `${Math.round((m.confidence || 0) * 100)}% de confiance`;
+    document.getElementById("match-report").href = "/report?id=" + m.person_id;
+    // Enrichissement OSINT proposé (jamais auto-déclenché) pour tout vrai sujet d'enquête
+    // reconnu — un sujet consentant / une entrée LFW n'y a jamais droit (le backend le
+    // refuserait de toute façon). Pas de seuil de confiance additionnel ici : le filtre
+    // qualité est déjà le seuil de matching côté serveur (FACE_MATCH_THRESHOLD + marge
+    // d'ambiguïté, cf. compare_embedding) — un match accepté peut légitimement descendre
+    // à ~45 % de confiance (webcam en direct vs une seule photo enregistrée), un seuil
+    // additionnel à 70 % ici masquait le bouton pour la quasi-totalité des matchs réels.
+    const enrichable = m.source === "investigation";
+    streamMatchPersonId = enrichable ? m.person_id : null;
+    document.getElementById("match-enrich-wrap").classList.toggle("hidden", !enrichable);
+    showIdentity("match");
 }
 
 function showIdentity(state) {
