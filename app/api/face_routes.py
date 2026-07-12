@@ -1,7 +1,7 @@
 import hashlib
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile, File, status
-from sqlalchemy import select
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, UploadFile, File, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
@@ -163,11 +163,20 @@ async def upload_face(
 
 @face_router.get("/persons", response_model=list[FacePersonResponse])
 async def list_face_persons(
+    response: Response,
     limit: int = Query(default=20, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     token_data: dict = Depends(require_role("admin")),
 ):
+    # Total exposé en en-tête (et non dans le corps) pour ne pas casser le contrat
+    # `response_model=list[...]` existant — consommé par le frontend pour la pagination
+    # numérotée (cf. dashboard.html : numéros de page cliquables + saut à la dernière page).
+    total = await db.scalar(
+        select(func.count()).select_from(Person).where(Person.embedding.is_not(None))
+    )
+    response.headers["X-Total-Count"] = str(total or 0)
+
     result = await db.execute(
         select(Person)
         .where(Person.embedding.is_not(None))

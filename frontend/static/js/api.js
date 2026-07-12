@@ -120,8 +120,27 @@ const API = (() => {
         return _request("POST", "/api/faces/upload", { body: formData });
     }
 
+    // Renvoie { data, total } — total lu depuis l'en-tête X-Total-Count (pagination :
+    // permet de savoir combien de pages afficher et où se trouve la dernière).
     async function listFacePersons(limit = 20, offset = 0) {
-        return _request("GET", "/api/faces/persons?limit=" + limit + "&offset=" + offset);
+        let resp;
+        try {
+            resp = await fetch("/api/faces/persons?limit=" + limit + "&offset=" + offset, { headers: _headers() });
+        } catch {
+            throw new Error("Impossible de contacter le serveur");
+        }
+        if (resp.status === 401 || resp.status === 403) {
+            clearToken();
+            window.location.href = "/";
+            throw new Error("Session expirée");
+        }
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            throw new Error(extractErrorMessage(data, resp.status));
+        }
+        const data = await resp.json();
+        const total = parseInt(resp.headers.get("X-Total-Count") || "0", 10);
+        return { data, total };
     }
 
     // --- Données ---

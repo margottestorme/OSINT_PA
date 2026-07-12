@@ -136,9 +136,12 @@
                     <p>Uploadez une image contenant un visage pour commencer.</p>
                 </div>
                 <div class="pagination" id="persons-pagination">
+                    <button class="btn btn-ghost btn-sm" id="persons-first" disabled title="Aller à la première page"><i data-lucide="chevrons-left"></i></button>
                     <button class="btn btn-ghost btn-sm" id="persons-prev" disabled><i data-lucide="chevron-left"></i></button>
-                    <span class="page-info" id="persons-page-info"></span>
+                    <div class="page-numbers" id="persons-page-numbers"></div>
                     <button class="btn btn-ghost btn-sm" id="persons-next" disabled><i data-lucide="chevron-right"></i></button>
+                    <button class="btn btn-ghost btn-sm" id="persons-last" disabled title="Aller à la dernière page"><i data-lucide="chevrons-right"></i></button>
+                    <span class="page-info" id="persons-page-info"></span>
                 </div>
             </div>
 

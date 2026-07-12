@@ -231,6 +231,9 @@ tbody tr:hover { background: #f8fafc; }
 /* Pagination */
 .pagination { display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 16px; }
 .pagination .page-info { font-size: 0.82rem; color: var(--text-muted); }
+.page-numbers { display: flex; gap: 4px; }
+.page-numbers button { min-width: 32px; }
+.page-numbers button.active:disabled { opacity: 1; background: var(--accent); color: #fff; cursor: default; }
 
 /* Accordéon (détail source) */
 .accordion { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; margin-bottom: 10px; }
